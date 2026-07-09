@@ -20,6 +20,20 @@ const envSchema = z.object({
   KSEF_ENVIRONMENT: z.enum(["TEST", "DEMO", "PRD"]).default("TEST"),
   /** Path to the SQLite database file (created if it doesn't exist). */
   DATABASE_PATH: z.string().trim().min(1).default("./data/ksef-exporter.sqlite"),
+
+  /**
+   * Single-owner login credentials for the API (SPEC §2.2.4). There is no
+   * user-management system: one account, configured via the environment.
+   * Treated as a secret, same as KSEF_TOKEN.
+   */
+  AUTH_USERNAME: z.string().trim().min(1, "AUTH_USERNAME is required"),
+  AUTH_PASSWORD: z.string().min(8, "AUTH_PASSWORD must be at least 8 characters"),
+  /** Secret used to sign/verify session JWTs. Treated as a secret. */
+  JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
+  /** Port the API server listens on. */
+  PORT: z.coerce.number().int().positive().default(3000),
+  /** Origin the frontend is served from, allow-listed for CORS. */
+  WEB_ORIGIN: z.string().trim().min(1).default("http://localhost:5173"),
 });
 
 export type AppConfig = Readonly<z.infer<typeof envSchema>>;

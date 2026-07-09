@@ -21,6 +21,8 @@
     "dump:invoices": "tsx src/ksef/dump-invoices.ts",
     "extract:xlsx": "tsx src/tools/extract-xlsx.ts",
     "reconcile": "tsx src/tools/reconcile.ts",
+    "dev:api": "tsx watch src/api/main.ts",
+    "start:api": "tsx src/api/main.ts",
     "db:generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate"
   },
@@ -35,10 +37,13 @@
     "xlsx": "^0.18.5"
   },
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@fastify/jwt": "^10.2.0",
     "better-sqlite3": "^12.11.1",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.45.2",
     "fast-xml-parser": "^5.9.3",
+    "fastify": "^5.10.0",
     "ksef-client": "^0.6.1",
     "zod": "^3.24.1"
   }

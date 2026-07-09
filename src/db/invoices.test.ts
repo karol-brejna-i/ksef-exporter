@@ -110,4 +110,36 @@ describe("invoices repository", () => {
 
     await expect(updateInvoiceCategory(db, 999, category.id, "matched")).rejects.toThrow();
   });
+
+  it("filters listed invoices by month", async () => {
+    await insertKsefInvoiceIfNotExists(db, SAMPLE_KSEF_INVOICE);
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20250215-123456789012-01",
+      issueDate: "2025-02-15",
+    });
+
+    const januaryOnly = await listInvoices(db, { month: "2025-01" });
+
+    expect(januaryOnly).toHaveLength(1);
+    expect(januaryOnly[0]?.issueDate).toBe("2025-01-15");
+  });
+
+  it("filters listed invoices by categoryId", async () => {
+    const media = await createCategory(db, "Media");
+    const other = await createCategory(db, "Inne");
+    const first = await insertKsefInvoiceIfNotExists(db, SAMPLE_KSEF_INVOICE);
+    const second = await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20250215-123456789012-01",
+      issueDate: "2025-02-15",
+    });
+    await updateInvoiceCategory(db, first.id, media.id, "matched");
+    await updateInvoiceCategory(db, second.id, other.id, "matched");
+
+    const mediaOnly = await listInvoices(db, { categoryId: media.id });
+
+    expect(mediaOnly).toHaveLength(1);
+    expect(mediaOnly[0]?.id).toBe(first.id);
+  });
 });

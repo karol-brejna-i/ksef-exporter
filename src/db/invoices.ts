@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 import type { Db } from "./client.js";
 import { invoices } from "./schema.js";
 
@@ -92,8 +92,26 @@ export async function getInvoiceById(db: Db, id: number): Promise<InvoiceRow | u
   return db.query.invoices.findFirst({ where: eq(invoices.id, id) });
 }
 
-export async function listInvoices(db: Db): Promise<InvoiceRow[]> {
-  return db.select().from(invoices).all();
+export interface ListInvoicesFilter {
+  /** "YYYY-MM"; matches invoices whose issueDate falls in that month. */
+  month?: string | undefined;
+  categoryId?: number | undefined;
+}
+
+export async function listInvoices(db: Db, filter: ListInvoicesFilter = {}): Promise<InvoiceRow[]> {
+  const conditions = [];
+  if (filter.month) {
+    conditions.push(like(invoices.issueDate, `${filter.month}%`));
+  }
+  if (filter.categoryId !== undefined) {
+    conditions.push(eq(invoices.categoryId, filter.categoryId));
+  }
+
+  const query = db.select().from(invoices);
+  if (conditions.length === 0) {
+    return query.all();
+  }
+  return query.where(and(...conditions)).all();
 }
 
 export async function updateInvoiceCategory(

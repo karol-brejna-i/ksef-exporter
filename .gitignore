@@ -9,3 +9,4 @@ coverage/
 .secrets
 /data/
 .pnpm-store/
+*.tsbuildinfo

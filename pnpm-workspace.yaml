@@ -1,3 +1,15 @@
+packages:
+  - "."
+  - "web"
+
+# Forces a single vite version across the workspace: vitest's own vite-node
+# dependency has a broad peer range on "vite", and without this pnpm
+# resolves it differently per project (the root project has no direct vite
+# dependency at all), producing two incompatible vite type declarations that
+# break `web`'s typecheck.
+overrides:
+  vite: "6.4.3"
+
 allowBuilds:
   better-sqlite3: true
   esbuild: true
