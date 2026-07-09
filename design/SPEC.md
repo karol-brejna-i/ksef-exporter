@@ -158,6 +158,7 @@ Each invoice XML (FA(2)/FA(3) logical structure) should be parsed into (at minim
 - **KSeF client library:** [`ksef-client`](https://github.com/smekcio/ksef-client-typescript) (npm package `ksef-client`), a community-maintained, MIT-licensed TypeScript SDK targeting KSeF API v2.6.0. Covers KSeF-token authentication, XAdES certificate authentication, and export/incremental-export workflows — i.e., everything described in §3.1–§3.2.
   - **Risk note:** This is a small, single-maintainer, community project (not officially published by the Ministry of Finance), unlike the official C#/Java SDKs. Pin exact versions, review changes before upgrading, and be prepared to patch or fork if a bug blocks progress.
   - Optional peer dependencies: `qrcode` (invoice verification QR codes), `node-forge` (XAdES from PKCS12), `libxmljs2` (FA(3) XSD validation) — only needed if those specific features are used.
+- **XML parsing:** [`fast-xml-parser`](https://github.com/NaturalIntelligence/fast-xml-parser) for parsing received invoice XML (FA(2)/FA(3)) into flat records — `ksef-client`'s FA(3) builders/importers are for constructing outbound invoices, not parsing arbitrary inbound ones.
 
 ---
 

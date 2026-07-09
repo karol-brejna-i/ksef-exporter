@@ -84,6 +84,13 @@ Tests (mocked KSeF API + fixture invoice XML/zip data):
 
 Definition of done: all tests above pass; running the sync module against recorded fixture data produces the exact expected set of invoice records with no duplicates and no gaps.
 
+**Status: done — architecture simplified vs. the plan above.** Investigation of `ksef-client` showed it already exposes `client.workflows.exportsIncremental` (`IncrementalExportWorkflow`), which fully implements start-export → poll → download parts → AES-256 decrypt → unzip → dedupe-by-KSeF-number → HWM continuation-point tracking (defaulting to `dateType: PermanentStorage`), i.e. everything `src/ksef/export.ts`/`package.ts`/`sync.ts` were planned to do. Reimplementing that would have been pure duplication of well-tested SDK code, so instead:
+- `src/ksef/invoices.ts`: `fetchPurchaseInvoices(client, options)` — a thin adapter calling `client.workflows.exportsIncremental.run({ subjectType: "Subject2", ... , requireExportPartHash: true })`, then parses each returned invoice XML file into our flat model, matching each to its metadata (for the authoritative KSeF number) by file name.
+- `src/ksef/invoice-parser.ts`: `parsePurchaseInvoiceXml(fileName, xml, metadata?)` — parses FA(2)/FA(3) invoice XML (via `fast-xml-parser`) into a `PurchaseInvoiceRecord` (SPEC §3.4). Field paths verified directly against the official bundled schema (`schemat_FA(3)_v1-0E.xsd`): `Faktura/Podmiot{1,2}/DaneIdentyfikacyjne/{NIP,Nazwa}` and `Faktura/Fa/{P_1,P_2,P_15,KodWaluty}` (these `P_n` field codes are stable across FA versions). The KSeF number itself isn't part of the invoice XML — it's taken from the matching `_metadata.json` entry (`ksefNumber`/`KsefNumber`), falling back to deriving it from the export package's file name (validated via the SDK's own `validateKsefNumber`) if no metadata match exists. Missing required fields raise a typed `InvoiceParsingError` rather than silently producing an incomplete record.
+- Rate-limit handling (`429`/`Retry-After`) and part-hash verification are handled internally by the SDK's workflow (`requireExportPartHash: true`), not reimplemented.
+- Tests: `src/ksef/invoice-parser.test.ts` (7 tests: happy path, KSeF-number-from-metadata vs. from-filename fallback, both metadata casings, comma-decimal amount normalization, malformed XML, missing-fields aggregation, invalid filename-derived number rejected) and `src/ksef/invoices.test.ts` (4 tests: correct `Subject2`/`PermanentStorage`/`requireExportPartHash` call shape, XML-to-record mapping incl. metadata matching, parse-error propagation, pass-through of polling/iteration options) — all mocking `client.workflows.exportsIncremental.run` via dependency injection, no real network calls. 11 new tests, all passing.
+- Persistence of continuation points (HWM state) across runs is deferred to Phase 3 as originally planned — this phase returns the updated `continuationPoints` for the caller to persist.
+
 ---
 
 ## Phase 3 — Persistence layer
@@ -96,7 +103,7 @@ Tasks:
   - `categories` (Media / Zakup towarów / Inne, extensible).
   - `categorization_rules` (condition → category, e.g. seller NIP or name-contains match, per SPEC §2.6 seed rules).
   - `sync_state` (HWM continuation point per subject type).
-- Migration tooling wired up (`drizzle-kit` or equivalent) and a documented `npm run migrate` command.
+- Migration tooling wired up (`drizzle-kit` or equivalent) and a documented `pnpm run migrate` command.
 - Repository/data-access modules (`src/db/invoices.ts`, `src/db/rules.ts`, etc.) — thin, typed wrappers, no business logic here.
 
 Tests:
