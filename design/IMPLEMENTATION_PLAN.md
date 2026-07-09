@@ -113,6 +113,8 @@ Tests:
 
 Definition of done: all tests above pass against a real (file or in-memory) SQLite instance created fresh per test run.
 
+**Status: done.** `src/db/schema.ts` defines all four tables via Drizzle (SQLite), matching the plan exactly, plus a unique index on `invoices.ksef_number` (SQLite treats each `NULL` as distinct, so manual entries with no KSeF number never collide) and on `categorization_rules(match_type, match_value)`. Migrations are generated with `pnpm run db:generate` (drizzle-kit) into `drizzle/migrations/`, and applied automatically by `src/db/client.ts`'s `createDb(path)` (use `":memory:"` for tests; `pnpm run migrate` applies them to a real file). `DATABASE_PATH` added to the Phase 0 config loader (default `./data/ksef-exporter.sqlite`); its parent directory is created automatically if missing. Repository modules: `src/db/categories.ts`, `src/db/invoices.ts` (`insertKsefInvoiceIfNotExists` upserts safely — re-syncing the same invoice never duplicates it or clobbers an already-assigned category), `src/db/rules.ts` (`upsertRule` updates in place on conflict, per the Phase 5 feedback-loop requirement), `src/db/sync-state.ts` (HWM continuation point per subject type, for Phase 2's `continuationPoints`). 21 new tests across 5 files (`client`, `categories`, `invoices`, `rules`, `sync-state`), all passing against a fresh in-memory (or, for one directory-creation test, temp-file) SQLite database per test.
+
 ---
 
 ## Phase 4 — Categorization engine (Tier 1 rules)

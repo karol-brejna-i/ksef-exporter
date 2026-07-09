@@ -15,6 +15,7 @@ describe("loadConfig", () => {
       KSEF_TOKEN: "test-token-value",
       KSEF_NIP: "5265877635",
       KSEF_ENVIRONMENT: "TEST",
+      DATABASE_PATH: "./data/ksef-exporter.sqlite",
     });
   });
 
@@ -23,6 +24,18 @@ describe("loadConfig", () => {
     const config = loadConfig(rest);
 
     expect(config.KSEF_ENVIRONMENT).toBe("TEST");
+  });
+
+  it("defaults DATABASE_PATH when omitted", () => {
+    const config = loadConfig(validEnv);
+
+    expect(config.DATABASE_PATH).toBe("./data/ksef-exporter.sqlite");
+  });
+
+  it("honors a custom DATABASE_PATH", () => {
+    const config = loadConfig({ ...validEnv, DATABASE_PATH: "/tmp/custom.sqlite" });
+
+    expect(config.DATABASE_PATH).toBe("/tmp/custom.sqlite");
   });
 
   it("normalizes a NIP containing dashes/spaces into plain digits", () => {

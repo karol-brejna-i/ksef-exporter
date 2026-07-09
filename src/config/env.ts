@@ -18,6 +18,8 @@ const envSchema = z.object({
     }),
   /** Which KSeF environment to talk to. */
   KSEF_ENVIRONMENT: z.enum(["TEST", "DEMO", "PRD"]).default("TEST"),
+  /** Path to the SQLite database file (created if it doesn't exist). */
+  DATABASE_PATH: z.string().trim().min(1).default("./data/ksef-exporter.sqlite"),
 });
 
 export type AppConfig = Readonly<z.infer<typeof envSchema>>;
