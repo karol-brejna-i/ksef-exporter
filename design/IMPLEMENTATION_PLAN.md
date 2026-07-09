@@ -15,8 +15,8 @@
 - **Package manager:** pnpm.
 - **Linting/formatting:** [Biome](https://biomejs.dev/) — a single fast tool replacing ESLint + Prettier; type-aware checks are still covered separately via `tsc --noEmit` (`pnpm run typecheck`).
 - **Database:** SQLite via [Drizzle ORM](https://orm.drizzle.team/) — zero-ops, fits self-hosted single-user deployment; swappable later if multi-user/cloud requires it.
-- **API layer (from Phase 7 onward):** [Fastify](https://fastify.io/) — lightweight, TypeScript-friendly.
-- **Structure:** start as a single package (root-level `src/`) organized by domain module. A separate frontend app is introduced only at Phase 8; restructure into a workspace at that point if needed, not before.
+- **API layer (from Phase 5 onward):** [Fastify](https://fastify.io/) — lightweight, TypeScript-friendly.
+- **Structure:** start as a single package (root-level `src/`) organized by domain module. A separate frontend app is introduced at Phase 5 (as soon as there's something worth looking at); restructure into a workspace at that point if needed, not before.
 
 ---
 
@@ -139,85 +139,80 @@ Definition of done: all tests above pass; running the engine over the full seed-
 
 ---
 
-## Phase 5 — Manual corrections & rule feedback loop
+## Phase 5 — Engine API + read-only UI (prototype milestone)
 
-**Goal:** Let a human override a category (HU-04) and have that correction improve future automatic categorization.
+**Goal:** Make the already-working engine (Phases 0–4: auth, extraction, persistence, Tier-1 categorization) *visible*, so the owner can look at real categorized invoices and give feedback before more backend logic is built.
+
+**Replanning note (2026-07):** originally the API layer and UI were separate, later phases (old Phase 7/8), built only after *all* backend features (corrections, manual entry) existed. Re-sequenced to a vertical-slice model instead: ship a minimal end-to-end increment now, then add correction (Phase 6) and manual entry (Phase 7) as their own backend+API+UI slices. This gets a testable prototype in front of the owner far earlier, at the cost of that first look being view-only (no corrections or manual entry yet — call this out explicitly when sharing it).
+
+Tasks:
+- Fastify app (`src/api/server.ts`) with, at minimum:
+  - `POST /auth/login` — minimal JWT auth (single env-configured user/password; no user-management system needed for a single-owner, self-hosted app) per SPEC §2.2.4 — a hard requirement even at this early stage, not a stub to skip.
+  - `POST /sync` — trigger a KSeF fetch for a given month/date range (HU-01), invoking Phase 4's `syncPurchaseInvoices`.
+  - `GET /invoices` — list invoices with category + confidence, filterable by month/category.
+  - Auth middleware protecting `/sync` and `/invoices`.
+  - Input validation and consistent error responses.
+- Frontend framework decision made now (e.g. a lightweight React + Vite app) since this is where the first UI code lands.
+- Minimal UI:
+  - Login screen (JWT auth against the API above).
+  - One-click "fetch this month" trigger calling `POST /sync` (HU-01).
+  - Table view grouped/filterable by category, with a clear visual distinction between "confident" and "needs review" rows (HU-03).
+  - **Explicitly out of scope here:** category correction (HU-04) and manual entry (HU-02) — no stubbed buttons/dead links for these; they arrive with their own backend logic in Phases 6–7.
+
+Tests:
+- API: each route's happy path + at least one validation/error-path test, using Fastify's injectable test client (no real HTTP server needed). Auth: unauthenticated requests to protected routes are rejected; authenticated requests succeed. `POST /sync` tested with the Phase 4 sync module mocked at this layer (its own correctness is already covered by Phase 2–4 tests).
+- UI: component/unit tests for the table view and the sync trigger (Vitest + a component-testing library appropriate to the chosen framework).
+
+Definition of done: all tests above pass; a person can log in, trigger a sync, and see real categorized invoices in a table with no manual steps in between. **This is the milestone to demo to the owner for feedback.**
+
+---
+
+## Phase 6 — Manual corrections & rule feedback loop
+
+**Goal:** Let a human override a category (HU-04) and have that correction improve future automatic categorization — and see it working through the Phase 5 UI, not just via API.
 
 **Why this matters more than it might look (2026-07 real-data note):** a real May 2026 comparison against KSeF PROD data showed that, with only the SPEC §2.6 seed rules and no LLM tier, a meaningful share of real invoices from new/less-common sellers won't match any Tier-1 rule and will land in "needs confirmation." This phase's correction-to-rule feedback loop is therefore the primary way the system's automatic coverage improves over time — treat it as load-bearing, not a nice-to-have.
 
 Tasks:
 - `src/categorization/correct.ts`: given an invoice ID and a new category, update the stored assignment and (per SPEC §4) offer/create a new Tier-1 rule (e.g. "seller NIP X → category Y") so future invoices from the same seller auto-categorize correctly.
 - Guard against duplicate/conflicting rules (e.g. re-correcting the same seller should update the existing rule, not create a second conflicting one).
+- `PATCH /invoices/:id/category` API endpoint (added to the Phase 5 Fastify app) invoking the above.
+- Category correction via dropdown per row in the Phase 5 table UI, calling the new endpoint.
 
 Tests:
 - Correcting a `needs_review` invoice updates its category and creates a new rule for that seller NIP.
 - A subsequent new invoice from the same seller NIP is now auto-categorized (`matched`) using the new rule — i.e. the feedback loop is verified end-to-end, not just the rule's existence.
 - Re-correcting an already-ruled seller updates the existing rule rather than creating a duplicate.
+- API: happy path + validation/error-path test for `PATCH /invoices/:id/category`.
+- UI: component test for the category-dropdown correction interaction.
 
-Definition of done: all tests above pass, including the end-to-end feedback-loop test.
+Definition of done: all tests above pass, including the end-to-end feedback-loop test; a person can correct a category from the UI and see it reflected immediately.
 
 ---
 
-## Phase 6 — Manual entry of exceptions (HU-02)
+## Phase 7 — Manual entry of exceptions (HU-02)
 
-**Goal:** Support entering costs that structurally cannot come from KSeF (foreign vendors, small receipts).
+**Goal:** Support entering costs that structurally cannot come from KSeF (foreign vendors, small receipts) — through the UI, completing the HU-01→HU-04 loop.
 
 **Why this matters more than it might look (2026-07 real-data note):** the same May 2026 comparison found that even vendors with an *existing* Tier-1 rule (e.g. PGNiG, Castorama) had zero KSeF invoices that month — they were evidently paid by card/receipt instead. Manual entry isn't just for structurally-KSeF-incompatible vendors (foreign, small receipts); it should be designed as a routine, low-friction monthly activity.
 
 Tasks:
 - `src/invoices/manual-entry.ts`: create an invoice-like record with `source = "manual"` and user-supplied fields (seller name, amount, date, category — category can be chosen directly, bypassing the rules engine, or still run through it for consistency — decide during implementation and document the choice).
 - Validation: required fields, sane amount/date formats.
+- `POST /invoices/manual` API endpoint (added to the Phase 5 Fastify app) invoking the above.
+- A manual-entry form in the UI calling the new endpoint.
 
 Tests:
 - A manually entered record is stored correctly and appears alongside KSeF-sourced invoices in the same query/reporting path (per SPEC §4, `source` distinguishes but doesn't fork logic).
 - Invalid input (missing amount, malformed date, etc.) is rejected with a clear validation error.
-
-Definition of done: all tests above pass.
-
----
-
-## Phase 7 — Engine API layer
-
-**Goal:** Expose the engine (Phases 1–6) over HTTP so both a future UI and manual/CLI use can drive it, per SPEC's priority of having "the engine" usable before any UI exists.
-
-Tasks:
-- Fastify app (`src/api/server.ts`) with, at minimum:
-  - `POST /sync` — trigger a KSeF fetch for a given month/date range (HU-01).
-  - `GET /invoices` — list invoices with category + confidence, filterable by month/category.
-  - `PATCH /invoices/:id/category` — manual correction (HU-04), invoking Phase 5 logic.
-  - `POST /invoices/manual` — manual entry (HU-02), invoking Phase 6 logic.
-- Basic auth/login (JWT-based per SPEC §2.2.4) protecting all routes — minimal but real (not a stub), since the spec treats this as a hard requirement even for the engine-only stage.
-- Input validation and consistent error responses across routes.
-
-Tests:
-- Each route: happy path + at least one validation/error-path test, using Fastify's injectable test client (no real HTTP server needed).
-- Auth: unauthenticated requests to protected routes are rejected; authenticated requests succeed.
-- `POST /sync` triggering the Phase 2 sync module is tested with the module mocked at this layer (its own correctness is already covered in Phase 2's tests).
-
-Definition of done: all tests above pass; the full engine is operable via HTTP calls alone (documented with example `curl`/HTTP requests), with no UI required.
-
----
-
-## Phase 8 — Basic UI
-
-**Goal:** A minimal, login-protected web UI satisfying HU-01 through HU-04, built on top of the Phase 7 API — no new business logic here.
-
-Tasks (exact frontend framework to be decided at this phase's start, e.g. a lightweight React + Vite app):
-- Login screen (JWT auth against the Phase 7 API).
-- Table view grouped/filterable by category, with a clear visual distinction between "confident" and "needs review" rows (HU-03).
-- One-click "fetch this month" trigger calling `POST /sync` (HU-01).
-- Category correction via dropdown per row, calling `PATCH /invoices/:id/category` (HU-04).
-- A manual-entry form calling `POST /invoices/manual` (HU-02).
-
-Tests:
-- Component/unit tests for the category-correction and manual-entry interactions (e.g. using Vitest + a component-testing library appropriate to the chosen framework).
-- At least one end-to-end happy-path test (e.g. login → view invoices → correct a category) if a suitable lightweight E2E tool is introduced; otherwise document this as a known gap rather than silently skipping it.
+- API: happy path + validation/error-path test for `POST /invoices/manual`.
+- UI: component test for the manual-entry form interaction. At least one end-to-end happy-path test (e.g. login → view invoices → correct a category → add a manual entry) if a suitable lightweight E2E tool is introduced by this point; otherwise document this as a known gap rather than silently skipping it.
 
 Definition of done: all tests above pass; a person can perform the full HU-01→HU-04 loop through the UI alone against a running backend.
 
 ---
 
-## Phase 9 — Deferred (not part of this plan's execution)
+## Phase 8 — Deferred (not part of this plan's execution)
 
 Tracked for later, per SPEC §5 — do not start without explicit request:
 - LLM categorization tier (Tier 2) behind the `CategorizationProvider` interface referenced in SPEC §4.
@@ -237,11 +232,12 @@ flowchart TD
     P1 --> P2[Phase 2: Invoice Extraction]
     P2 --> P3[Phase 3: Persistence]
     P3 --> P4[Phase 4: Categorization Rules]
-    P4 --> P5[Phase 5: Manual Corrections + Feedback Loop]
-    P5 --> P6[Phase 6: Manual Entry]
-    P6 --> P7[Phase 7: API Layer]
-    P7 --> P8[Phase 8: Basic UI]
-    P8 -.deferred.-> P9[Phase 9: LLM, multi-location, etc.]
+    P4 --> P5[Phase 5: API + Read-only UI Prototype]
+    P5 --> P6[Phase 6: Manual Corrections + Feedback Loop]
+    P6 --> P7[Phase 7: Manual Entry]
+    P7 -.deferred.-> P8[Phase 8: LLM, multi-location, etc.]
 ```
 
 Phases 3 and 4 may be interleaved with Phase 2 in practice (invoices need somewhere to land as soon as they're parsed), but the dependency order above must be respected — no phase should be considered done ahead of its prerequisites, and no phase's completion is claimed without passing tests per the conventions above.
+
+Phase 5 is now the key early feedback milestone (re-sequenced 2026-07, see note there) — everything it needs is already done (Phases 0–4), so it should start immediately. Phases 6 and 7 each ship a complete backend+API+UI slice rather than being split across separate "backend-only" and "UI-only" phases.
