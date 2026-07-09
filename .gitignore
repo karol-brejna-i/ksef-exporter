@@ -6,3 +6,4 @@ coverage/
 .DS_Store
 *.sqlite
 *.sqlite3
+.secrets

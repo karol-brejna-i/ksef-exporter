@@ -1,2 +1,5 @@
 allowBuilds:
   esbuild: true
+  libxmljs2: true
+minimumReleaseAgeExclude:
+  - ksef-client@0.6.1
