@@ -14,9 +14,15 @@
  *                           invoice that parsed successfully
  *   - parse-errors.json     file name + error message for any that didn't
  *
+ * Each run starts a new KSeF export, which is subject to KSeF's own
+ * server-side rate limit (see src/ksef/rate-limit.ts) -- avoid running this
+ * back-to-back with other export-starting scripts (smoke:invoices,
+ * dump:invoices) in a short window.
+ *
  * Usage:
- *   pnpm run dump:invoices                    # last 30 days
+ *   pnpm run dump:invoices                              # last 30 days
  *   DUMP_WINDOW_DAYS=90 pnpm run dump:invoices
+ *   DUMP_WINDOW_FROM=2026-05-01 DUMP_WINDOW_TO=2026-06-01 pnpm run dump:invoices
  */
 import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -24,6 +30,7 @@ import { join } from "node:path";
 import { loadConfig } from "../config/env.js";
 import { KsefSessionManager } from "./client.js";
 import { InvoiceParsingError, parsePurchaseInvoiceXml } from "./invoice-parser.js";
+import { formatKsefError } from "./rate-limit.js";
 
 function isoDaysAgo(days: number): string {
   const date = new Date();
@@ -34,8 +41,8 @@ function isoDaysAgo(days: number): string {
 async function main() {
   const config = loadConfig();
   const windowDays = Number(process.env.DUMP_WINDOW_DAYS ?? 30);
-  const windowFrom = isoDaysAgo(windowDays);
-  const windowTo = new Date().toISOString();
+  const windowFrom = process.env.DUMP_WINDOW_FROM ?? isoDaysAgo(windowDays);
+  const windowTo = process.env.DUMP_WINDOW_TO ?? new Date().toISOString();
 
   const outDir = join(process.cwd(), "data", "invoices");
   const rawDir = join(outDir, "raw");
@@ -99,6 +106,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error("KSeF invoice dump failed:", error);
+  console.error("KSeF invoice dump failed:", formatKsefError(error));
   process.exitCode = 1;
 });

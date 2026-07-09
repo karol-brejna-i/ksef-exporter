@@ -7,17 +7,21 @@
  * before trusting the pipeline end-to-end.
  *
  * Does NOT write to the application database -- this only calls the KSeF
- * API and prints a summary, so it's safe to run repeatedly against
- * production without affecting local state.
+ * API and prints a summary. Each run starts a new KSeF export, which is
+ * subject to KSeF's own server-side rate limit (see src/ksef/rate-limit.ts)
+ * -- avoid running this back-to-back with other export-starting scripts
+ * (smoke:invoices, dump:invoices) in a short window.
  *
  * Usage:
- *   pnpm run smoke:invoices                  # last 30 days
+ *   pnpm run smoke:invoices                              # last 30 days
  *   SMOKE_WINDOW_DAYS=90 pnpm run smoke:invoices
+ *   SMOKE_WINDOW_FROM=2026-05-01 SMOKE_WINDOW_TO=2026-06-01 pnpm run smoke:invoices
  */
 import "dotenv/config";
 import { loadConfig } from "../config/env.js";
 import { KsefSessionManager } from "./client.js";
 import { fetchPurchaseInvoices } from "./invoices.js";
+import { formatKsefError } from "./rate-limit.js";
 
 function isoDaysAgo(days: number): string {
   const date = new Date();
@@ -28,8 +32,8 @@ function isoDaysAgo(days: number): string {
 async function main() {
   const config = loadConfig();
   const windowDays = Number(process.env.SMOKE_WINDOW_DAYS ?? 30);
-  const windowFrom = isoDaysAgo(windowDays);
-  const windowTo = new Date().toISOString();
+  const windowFrom = process.env.SMOKE_WINDOW_FROM ?? isoDaysAgo(windowDays);
+  const windowTo = process.env.SMOKE_WINDOW_TO ?? new Date().toISOString();
 
   console.log(`Connecting to KSeF (${config.KSEF_ENVIRONMENT}) as NIP ${config.KSEF_NIP}...`);
   const manager = new KsefSessionManager(config);
@@ -58,6 +62,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error("KSeF invoice smoke test failed:", error);
+  console.error("KSeF invoice smoke test failed:", formatKsefError(error));
   process.exitCode = 1;
 });
