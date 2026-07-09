@@ -143,6 +143,8 @@ Definition of done: all tests above pass; running the engine over the full seed-
 
 **Goal:** Let a human override a category (HU-04) and have that correction improve future automatic categorization.
 
+**Why this matters more than it might look (2026-07 real-data note):** a real May 2026 comparison against KSeF PROD data showed that, with only the SPEC §2.6 seed rules and no LLM tier, a meaningful share of real invoices from new/less-common sellers won't match any Tier-1 rule and will land in "needs confirmation." This phase's correction-to-rule feedback loop is therefore the primary way the system's automatic coverage improves over time — treat it as load-bearing, not a nice-to-have.
+
 Tasks:
 - `src/categorization/correct.ts`: given an invoice ID and a new category, update the stored assignment and (per SPEC §4) offer/create a new Tier-1 rule (e.g. "seller NIP X → category Y") so future invoices from the same seller auto-categorize correctly.
 - Guard against duplicate/conflicting rules (e.g. re-correcting the same seller should update the existing rule, not create a second conflicting one).
@@ -159,6 +161,8 @@ Definition of done: all tests above pass, including the end-to-end feedback-loop
 ## Phase 6 — Manual entry of exceptions (HU-02)
 
 **Goal:** Support entering costs that structurally cannot come from KSeF (foreign vendors, small receipts).
+
+**Why this matters more than it might look (2026-07 real-data note):** the same May 2026 comparison found that even vendors with an *existing* Tier-1 rule (e.g. PGNiG, Castorama) had zero KSeF invoices that month — they were evidently paid by card/receipt instead. Manual entry isn't just for structurally-KSeF-incompatible vendors (foreign, small receipts); it should be designed as a routine, low-friction monthly activity.
 
 Tasks:
 - `src/invoices/manual-entry.ts`: create an invoice-like record with `source = "manual"` and user-supplied fields (seller name, amount, date, category — category can be chosen directly, bypassing the rules engine, or still run through it for consistency — decide during implementation and document the choice).

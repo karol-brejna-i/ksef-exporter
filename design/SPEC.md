@@ -51,6 +51,7 @@
 ### 2.3 Known limitations / risks (must be designed around, not ignored)
 
 - **Invoices outside KSeF:** Foreign vendors (e.g. Meta, Google) and small receipts with a NIP (up to 450 PLN) are **not** guaranteed to appear in KSeF, or may appear late. The app must support a manual-entry escape hatch (HU-02) for these — this is a first-class flow, not an edge case.
+- **Known vendors aren't always in KSeF for a given period:** Confirmed with real May 2026 data — even sellers with an established Tier-1 rule (e.g. PGNiG, Castorama) had **zero** KSeF invoices that month, because the same vendor can also be paid by card/receipt outside KSeF. HU-02 manual entry should be designed as a routine monthly activity, not a rare fallback.
 - **LLM cost control:** Running every line item through an LLM is wasteful. Deterministic rules must be applied first and as broadly as possible; the LLM (when implemented) is a fallback only for what rules can't confidently classify.
 
 ### 2.4 Architecture components (conceptual, from original spec)
@@ -80,6 +81,10 @@ These are the initial deterministic (Tier 1) rules to bootstrap the engine, deri
 | Ochrona, Securitas, Leasing, Skoda, OBI, Castorama | **INNE / STAŁE** (Other / fixed costs) |
 
 Categories used in the UI (per HU-03): **Media**, **Zakup towarów** (Purchased goods), **Inne** (Other). Anything not matched by a rule is "needs confirmation."
+
+**Note (validated 2026-07 against real May 2026 KSeF data):** most of these keywords still correctly matched real KSeF seller names, and the comparison surfaced several additional recurring vendors with no rule yet (e.g. Golden Fruits, Frito Lay, Marmax, Interworks, Taktum). Deliberately **not** added here as a guess — per §4 Tier 3, the correct category should be confirmed once by the owner via the UI's correction flow, which then persists automatically as a new rule. This keeps the seed list small and trustworthy instead of speculative.
+
+Also considered and **rejected**: a permanent "spreadsheet nickname → KSeF legal name" synonyms dictionary (e.g. mapping the owner's shorthand "KSIĘGOWA"/"ADA-CHEMIA" to actual KSeF seller names). This only matters for reconciling against the now-legacy spreadsheet — the live app only ever sees real KSeF seller names/NIPs, so it has no ongoing product value. Skipped.
 
 ---
 
@@ -165,6 +170,7 @@ Each invoice XML (FA(2)/FA(3) logical structure) should be parsed into (at minim
 ## 4. Categorization Engine Design Principles
 
 - **Tier 1 (rules):** Match on seller NIP (preferred, stable identifier) and/or seller name (fallback/bootstrapping, using the seed rules in §2.6). Every successful rule match should be flagged as "confident" in the UI (per HU-03).
+  - **Validated (2026-07):** preferring NIP already avoids a real issue seen in production data — the same legal entity can appear with slightly different name formatting across invoices (e.g. `P4 sp. z o.o.` vs `P4 sp. z o. o.`). No name-normalization/synonyms layer is needed as long as NIP matching stays the primary path.
 - **Tier 2 (LLM, future):** Only invoked for invoices that don't match any Tier 1 rule. Must be implemented behind a **provider-agnostic interface** (e.g. a `CategorizationProvider` abstraction) so any LLM vendor (OpenAI, Anthropic, local models, etc.) can be plugged in later without touching the rest of the engine. Not required to be functional for the first working engine.
 - **Tier 3 (human correction):** When a user changes a category via the UI (HU-04), the system should offer to persist this as a new Tier 1 rule (e.g. "always categorize invoices from this seller NIP as X"), closing the feedback loop and reducing future LLM/manual-review load.
 - **Manual entries (HU-02):** Structurally similar to a KSeF-derived invoice record but flagged with a distinct `source` (e.g. `manual` vs `ksef`), so reporting/aggregation logic doesn't need to special-case them.
@@ -185,3 +191,4 @@ Each invoice XML (FA(2)/FA(3) logical structure) should be parsed into (at minim
 ## 6. Open Items
 
 - **Implementation plan** — see [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md) for the phased, step-by-step build order (engine first, then UI), including the mandatory testing conventions applied throughout.
+- **Real-data validation (2026-07):** an ad hoc comparison of KSeF PROD data against the owner's historical spreadsheet for May 2026 confirmed the pipeline works end-to-end (99 real invoices, 41 sellers, 0 parse failures after fixing a namespace-prefix XML bug) and validated the NIP-preferred matching design (see §4). It also showed that, under Tier-1-only rules (no LLM yet), a meaningful share of real invoices won't match any seed rule and will land in "needs confirmation" — reinforcing that Phase 5's correction-feeds-back-into-rules loop and Phase 8's bulk-review UX aren't nice-to-haves but load-bearing for a good day-to-day experience. See §2.3/§2.6/§4 for the specific notes this validation produced. (Full comparison data is not committed — it contains real business data.)
