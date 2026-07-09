@@ -17,6 +17,9 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "smoke:ksef": "tsx src/ksef/smoke.ts",
+    "smoke:invoices": "tsx src/ksef/smoke-invoices.ts",
+    "dump:invoices": "tsx src/ksef/dump-invoices.ts",
+    "extract:xlsx": "tsx src/tools/extract-xlsx.ts",
     "db:generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate"
   },
@@ -27,7 +30,8 @@
     "drizzle-kit": "^0.31.10",
     "tsx": "4.23.0",
     "typescript": "^5.7.3",
-    "vitest": "^3.0.4"
+    "vitest": "^3.0.4",
+    "xlsx": "^0.18.5"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",

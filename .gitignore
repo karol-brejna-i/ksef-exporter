@@ -7,3 +7,5 @@ coverage/
 *.sqlite
 *.sqlite3
 .secrets
+/data/
+.pnpm-store/
