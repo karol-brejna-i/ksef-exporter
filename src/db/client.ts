@@ -21,7 +21,15 @@ export function createDb(path: string): { db: Db; sqlite: Database.Database } {
   }
 
   const sqlite = new Database(path);
+  // WAL allows concurrent readers alongside a single writer (required for
+  // multiple clients/processes accessing the same file at once). busy_timeout
+  // makes writers that collide retry for up to 5s instead of throwing
+  // SQLITE_BUSY immediately. synchronous=NORMAL is the standard safe pairing
+  // with WAL (still durable across app crashes; only risks loss on an OS
+  // crash/power loss, unlike FULL).
   sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("busy_timeout = 5000");
+  sqlite.pragma("synchronous = NORMAL");
   sqlite.pragma("foreign_keys = ON");
 
   const db = drizzle(sqlite, { schema });

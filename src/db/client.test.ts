@@ -25,6 +25,18 @@ describe("createDb", () => {
     }
   });
 
+  it("enables WAL journal mode, a busy timeout, and foreign keys for concurrent multi-client access", () => {
+    const { sqlite } = createDb(":memory:");
+
+    try {
+      expect(sqlite.pragma("busy_timeout", { simple: true })).toBe(5000);
+      expect(sqlite.pragma("synchronous", { simple: true })).toBe(1); // NORMAL
+      expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("can be created and migrated more than once without error (idempotent migrations)", () => {
     const first = createDb(":memory:");
     first.sqlite.close();
@@ -54,6 +66,19 @@ describe("createDb", () => {
       sqlite.close();
 
       expect(existsSync(dbPath)).toBe(true);
+    });
+
+    it("uses WAL journal mode so multiple clients can read/write the same file concurrently", () => {
+      const base = mkdtempSync(join(tmpdir(), "ksef-exporter-db-test-"));
+      tempDir = base;
+      const dbPath = join(base, "db.sqlite");
+
+      const { sqlite } = createDb(dbPath);
+      try {
+        expect(sqlite.pragma("journal_mode", { simple: true })).toBe("wal");
+      } finally {
+        sqlite.close();
+      }
     });
   });
 });
