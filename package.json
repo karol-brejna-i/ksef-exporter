@@ -20,6 +20,7 @@
     "smoke:invoices": "tsx src/ksef/smoke-invoices.ts",
     "dump:invoices": "tsx src/ksef/dump-invoices.ts",
     "extract:xlsx": "tsx src/tools/extract-xlsx.ts",
+    "reconcile": "tsx src/tools/reconcile.ts",
     "db:generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate"
   },
