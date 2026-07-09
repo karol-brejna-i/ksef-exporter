@@ -131,4 +131,40 @@ describe("parsePurchaseInvoiceXml", () => {
       /ksefNumber/,
     );
   });
+
+  it("parses an invoice XML that uses a prefixed namespace instead of a default one", () => {
+    // Regression test: real PROD KSeF invoices were observed using
+    // `<ns0:Faktura xmlns:ns0="...">` / `<tns:Faktura xmlns:tns="...">`
+    // instead of the default-namespace form used elsewhere in this file --
+    // this broke parsing entirely until `removeNSPrefix: true` was added.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<ns0:Faktura xmlns:ns0="http://crd.gov.pl/wzor/2025/06/25/13775/">
+  <ns0:Podmiot1>
+    <ns0:DaneIdentyfikacyjne>
+      <ns0:NIP>5265877635</ns0:NIP>
+      <ns0:Nazwa>Parkowa Dostawca Sp. z o.o.</ns0:Nazwa>
+    </ns0:DaneIdentyfikacyjne>
+  </ns0:Podmiot1>
+  <ns0:Podmiot2>
+    <ns0:DaneIdentyfikacyjne>
+      <ns0:NIP>1111111111</ns0:NIP>
+      <ns0:Nazwa>Parkowa Sp. z o.o.</ns0:Nazwa>
+    </ns0:DaneIdentyfikacyjne>
+  </ns0:Podmiot2>
+  <ns0:Fa>
+    <ns0:KodWaluty>PLN</ns0:KodWaluty>
+    <ns0:P_1>2025-01-15</ns0:P_1>
+    <ns0:P_2>FV/2025/01/001</ns0:P_2>
+    <ns0:P_15>1234.56</ns0:P_15>
+  </ns0:Fa>
+</ns0:Faktura>`;
+
+    const record = parsePurchaseInvoiceXml(`${SAMPLE_KSEF_NUMBER}.xml`, xml);
+
+    expect(record.sellerNip).toBe("5265877635");
+    expect(record.sellerName).toBe("Parkowa Dostawca Sp. z o.o.");
+    expect(record.invoiceNumber).toBe("FV/2025/01/001");
+    expect(record.grossTotal).toBe(1234.56);
+    expect(record.currency).toBe("PLN");
+  });
 });

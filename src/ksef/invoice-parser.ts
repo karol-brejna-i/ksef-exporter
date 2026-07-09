@@ -42,6 +42,13 @@ export class InvoiceParsingError extends Error {
 const xmlParser = new XMLParser({
   ignoreAttributes: true,
   trimValues: true,
+  // Real-world KSeF invoice XML is inconsistent about namespace prefixes:
+  // some documents use a default namespace (no prefix, e.g. `<Faktura>`),
+  // others declare a prefixed one (e.g. `<ns0:Faktura>`/`<tns:Faktura>`).
+  // The element/field names (Faktura, Podmiot1, P_1, ...) are stable
+  // either way, so stripping prefixes lets one set of field paths handle
+  // both without per-invoice branching.
+  removeNSPrefix: true,
 });
 
 function asRecord(value: unknown): Record<string, unknown> {
