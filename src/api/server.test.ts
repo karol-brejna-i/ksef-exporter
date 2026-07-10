@@ -228,4 +228,77 @@ describe("API server", () => {
       expect(getClient).not.toHaveBeenCalled();
     });
   });
+
+  describe("PATCH /invoices/:id/category", () => {
+    it("corrects the category and returns the updated invoice", async () => {
+      const category = await createCategory(db, "Media");
+      const invoice = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "PATCH",
+        url: `/invoices/${invoice.id}/category`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { categoryId: category.id },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as {
+        invoice: { categoryId: number; categorizationConfidence: string };
+      };
+      expect(body.invoice.categoryId).toBe(category.id);
+      expect(body.invoice.categorizationConfidence).toBe("matched");
+    });
+
+    it("rejects a request without a token", async () => {
+      const response = await fastify.inject({
+        method: "PATCH",
+        url: "/invoices/1/category",
+        payload: { categoryId: 1 },
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("rejects a missing categoryId with 400", async () => {
+      const invoice = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "PATCH",
+        url: `/invoices/${invoice.id}/category`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it("rejects a non-numeric invoice id with 400", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "PATCH",
+        url: "/invoices/not-a-number/category",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { categoryId: 1 },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it("returns 404 for a non-existent invoice", async () => {
+      const category = await createCategory(db, "Media");
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "PATCH",
+        url: "/invoices/999/category",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { categoryId: category.id },
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+  });
 });

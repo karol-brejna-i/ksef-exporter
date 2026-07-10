@@ -192,6 +192,8 @@ Tests:
 
 Definition of done: all tests above pass, including the end-to-end feedback-loop test; a person can correct a category from the UI and see it reflected immediately.
 
+**Status: done.** `src/categorization/correct.ts` (`correctInvoiceCategory(db, invoiceId, categoryId)`) updates the invoice to `matched` confidence and upserts a Tier-1 rule for that seller — `seller_nip` when the invoice has one (preferred, per SPEC §4), falling back to `seller_name_contains` using the full seller name for invoices without a NIP (e.g. some manual entries). Reuses `upsertRule`'s existing (matchType, matchValue) conflict handling, so re-correcting an already-ruled seller updates that rule in place rather than creating a duplicate. Throws a typed `InvoiceNotFoundError` for an unknown invoice id. `PATCH /invoices/:id/category` (zod-validated `id` route param and `categoryId` body) was added to `src/api/server.ts`, mapping `InvoiceNotFoundError` to a 404. The Phase 5 `InvoicesTable` UI now renders a `<select>` per row (disabled while its own correction is in flight) instead of plain category text; choosing a new category calls the endpoint and the corrected invoice replaces its row in `App`'s state immediately — no full reload. 5 new backend tests in `src/categorization/correct.test.ts` (including the full end-to-end feedback-loop check: correct → `listRules` → `categorize()` on a fresh same-seller invoice returns `matched`), 5 new API tests in `src/api/server.test.ts`, and 2 new/updated frontend tests (dropdown correction + error path) — 101 backend + 17 frontend tests passing overall.
+
 ---
 
 ## Phase 7 — Manual entry of exceptions (HU-02)

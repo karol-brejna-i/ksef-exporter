@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ApiError, fetchCategories, fetchInvoices, login, triggerSync } from "./client";
+import {
+  type ApiError,
+  correctCategory,
+  fetchCategories,
+  fetchInvoices,
+  login,
+  triggerSync,
+} from "./client";
 
 const originalFetch = globalThis.fetch;
 
@@ -74,6 +81,22 @@ describe("api client", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ windowFrom: "2025-01-01", windowTo: "2025-01-31" }),
+      }),
+    );
+  });
+
+  it("corrects an invoice's category", async () => {
+    const invoice = { id: 1, categoryId: 2, categorizationConfidence: "matched" };
+    mockFetch(200, { invoice });
+
+    const result = await correctCategory("jwt-token", 1, 2);
+
+    expect(result).toEqual({ invoice });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/invoices/1/category",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ categoryId: 2 }),
       }),
     );
   });

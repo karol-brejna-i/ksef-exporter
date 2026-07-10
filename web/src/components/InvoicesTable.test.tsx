@@ -1,9 +1,18 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Category, Invoice } from "../api/client";
+import * as apiClient from "../api/client";
 import { InvoicesTable } from "./InvoicesTable";
 
-const categories: Category[] = [{ id: 1, name: "Media" }];
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const categories: Category[] = [
+  { id: 1, name: "Media" },
+  { id: 2, name: "Inne" },
+];
 
 function invoice(overrides: Partial<Invoice> = {}): Invoice {
   return {
@@ -27,17 +36,31 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
 
 describe("InvoicesTable", () => {
   it("shows an empty-state message when there are no invoices", () => {
-    render(<InvoicesTable invoices={[]} categories={categories} />);
+    render(
+      <InvoicesTable
+        invoices={[]}
+        categories={categories}
+        token="jwt-token"
+        onCorrected={vi.fn()}
+      />,
+    );
 
     expect(screen.getByText(/no invoices yet/i)).toBeInTheDocument();
   });
 
   it("renders a row per invoice with its category name", () => {
-    render(<InvoicesTable invoices={[invoice()]} categories={categories} />);
+    render(
+      <InvoicesTable
+        invoices={[invoice()]}
+        categories={categories}
+        token="jwt-token"
+        onCorrected={vi.fn()}
+      />,
+    );
 
     expect(screen.getByText("Energa Operator")).toBeInTheDocument();
-    expect(screen.getByText("Media")).toBeInTheDocument();
     expect(screen.getByText("123.45 PLN")).toBeInTheDocument();
+    expect(screen.getByLabelText("Category for Energa Operator")).toHaveValue("1");
   });
 
   it("visually distinguishes needs_review rows from matched rows", () => {
@@ -48,6 +71,8 @@ describe("InvoicesTable", () => {
           invoice({ id: 2, categorizationConfidence: "needs_review", categoryId: null }),
         ]}
         categories={categories}
+        token="jwt-token"
+        onCorrected={vi.fn()}
       />,
     );
 
@@ -56,5 +81,46 @@ describe("InvoicesTable", () => {
 
     expect(matchedRow).toHaveClass("matched");
     expect(needsReviewRow).toHaveClass("needs-review");
+  });
+
+  it("corrects the category via the dropdown and calls onCorrected", async () => {
+    const corrected = invoice({ categoryId: 2, categorizationConfidence: "matched" });
+    vi.spyOn(apiClient, "correctCategory").mockResolvedValue({ invoice: corrected });
+    const onCorrected = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <InvoicesTable
+        invoices={[invoice()]}
+        categories={categories}
+        token="jwt-token"
+        onCorrected={onCorrected}
+      />,
+    );
+
+    await user.selectOptions(screen.getByLabelText("Category for Energa Operator"), "2");
+
+    expect(apiClient.correctCategory).toHaveBeenCalledWith("jwt-token", 1, 2);
+    await vi.waitFor(() => expect(onCorrected).toHaveBeenCalledWith(corrected));
+  });
+
+  it("shows an error message when the correction fails", async () => {
+    vi.spyOn(apiClient, "correctCategory").mockRejectedValue(
+      new apiClient.ApiError("invoice not found", 404),
+    );
+    const user = userEvent.setup();
+
+    render(
+      <InvoicesTable
+        invoices={[invoice()]}
+        categories={categories}
+        token="jwt-token"
+        onCorrected={vi.fn()}
+      />,
+    );
+
+    await user.selectOptions(screen.getByLabelText("Category for Energa Operator"), "2");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("invoice not found");
   });
 });

@@ -80,3 +80,15 @@ export function triggerSync(
     token,
   );
 }
+
+export function correctCategory(
+  token: string,
+  invoiceId: number,
+  categoryId: number,
+): Promise<{ invoice: Invoice }> {
+  return request(
+    `/invoices/${invoiceId}/category`,
+    { method: "PATCH", body: JSON.stringify({ categoryId }) },
+    token,
+  );
+}

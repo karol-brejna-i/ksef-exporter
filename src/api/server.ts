@@ -8,6 +8,7 @@ import Fastify, {
 } from "fastify";
 import type { KsefClient } from "ksef-client";
 import { z } from "zod";
+import { correctInvoiceCategory, InvoiceNotFoundError } from "../categorization/correct.js";
 import type { AppConfig } from "../config/env.js";
 import { listCategories } from "../db/categories.js";
 import type { Db } from "../db/client.js";
@@ -46,6 +47,14 @@ const invoiceQuerySchema = z.object({
     .regex(/^\d{4}-\d{2}$/, "month must be formatted as YYYY-MM")
     .optional(),
   categoryId: z.coerce.number().int().positive().optional(),
+});
+
+const invoiceIdParamsSchema = z.object({
+  id: z.coerce.number().int().positive(),
+});
+
+const categoryCorrectionBodySchema = z.object({
+  categoryId: z.number().int().positive(),
 });
 
 /**
@@ -116,6 +125,36 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
     const categories = await listCategories(deps.db);
     return { categories };
   });
+
+  fastify.patch(
+    "/invoices/:id/category",
+    { onRequest: [fastify.authenticate] },
+    async (request, reply) => {
+      const paramsResult = invoiceIdParamsSchema.safeParse(request.params);
+      if (!paramsResult.success) {
+        return reply.code(400).send({ error: "invoice id must be a positive integer" });
+      }
+
+      const bodyResult = categoryCorrectionBodySchema.safeParse(request.body);
+      if (!bodyResult.success) {
+        return reply.code(400).send({ error: "categoryId is required" });
+      }
+
+      try {
+        const invoice = await correctInvoiceCategory(
+          deps.db,
+          paramsResult.data.id,
+          bodyResult.data.categoryId,
+        );
+        return { invoice };
+      } catch (error) {
+        if (error instanceof InvoiceNotFoundError) {
+          return reply.code(404).send({ error: error.message });
+        }
+        throw error;
+      }
+    },
+  );
 
   return fastify;
 }

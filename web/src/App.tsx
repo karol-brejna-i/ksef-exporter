@@ -40,6 +40,12 @@ export function App() {
     }
   }, [token, loadData]);
 
+  function handleCorrected(updated: Invoice): void {
+    setInvoices((current) =>
+      current.map((invoice) => (invoice.id === updated.id ? updated : invoice)),
+    );
+  }
+
   if (!token) {
     return <LoginForm onLogin={setToken} />;
   }
@@ -49,7 +55,12 @@ export function App() {
       <h1>KSeF Exporter</h1>
       {error && <p role="alert">{error}</p>}
       <SyncButton token={token} onSynced={() => void loadData(token)} />
-      <InvoicesTable invoices={invoices} categories={categories} />
+      <InvoicesTable
+        invoices={invoices}
+        categories={categories}
+        token={token}
+        onCorrected={handleCorrected}
+      />
     </main>
   );
 }
