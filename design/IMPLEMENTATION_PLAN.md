@@ -196,9 +196,43 @@ Definition of done: all tests above pass, including the end-to-end feedback-loop
 
 ---
 
-## Phase 7 — Manual entry of exceptions (HU-02)
+## Phase 7 — UX foundations: navigation, import visibility & browsing confidence
 
-**Goal:** Support entering costs that structurally cannot come from KSeF (foreign vendors, small receipts) — through the UI, completing the HU-01→HU-04 loop.
+**Goal:** Make day-to-day use of the app trustworthy and navigable. Real first use of the Phase 5/6 UI (2026-07) showed it reads as "just an import button": there's no way to tell previously-imported data exists, no record of what was imported and when, and no structure for moving between "browse" and "import" as separate concerns. Fix that before Phase 8 adds another screen (manual entry) on top of a confusing base.
+
+**Why this matters more than it might look (2026-07 real-usage note):** the owner reported being unable to find a way to browse invoices after logging in, even though the table has existed since Phase 5/6 — because the import control was the visual and structural focus of the only screen, and an empty/loading table can look identical to "there's nothing here." Trust in the tool depends on being able to see what's there and confirm an import worked, not just trigger one. This is the same class of problem SPEC §2.2 NFR 5 (import traceability) and the HU-03 UX principle now call out explicitly.
+
+Tasks, in priority order (rationale below the list):
+1. **Default landing view = invoice browsing, not import.** Restructure `App.tsx` so the invoices table — with a visible loading state while the initial fetch is in flight — is the primary content shown right after login. The import control moves into its own clearly-separated panel/screen, no longer the first or only thing on the page.
+2. **Simple navigation.** A lightweight two-item nav — "Invoices" (default) and "Import" — implemented as a plain component-level toggle, not a routing library; a real router only earns its cost once there are 3+ screens (e.g. once Phase 8's manual-entry form adds a third).
+3. **Import run history (traceability, SPEC §2.2 NFR 5).** New `sync_runs` table (`src/db/schema.ts`) + repository (`src/db/sync-runs.ts`) recording each triggered import: requested-at timestamp, `windowFrom`/`windowTo`, resulting invoice count, and success/failure (+ error message on failure). The `POST /sync` route records a run at the start of the request and updates it with the outcome. New `GET /sync/runs` endpoint (most recent first, reasonable limit e.g. 20). The Import screen shows this as a "recent imports" list, so the owner can confirm an import happened and how many invoices it returned — directly answering "is the import alright?".
+4. **Summary bar on the Invoices screen.** Total invoice count, total gross amount, and count of `needs_review` items shown above the table, for an at-a-glance sanity check that doesn't require reading every row.
+
+**Why this order:** (1)+(2) fix the actual reported problem — invoices are invisible/unreachable — with no new backend work, so they should land first and could ship alone as a quick win if needed. (3) is the next priority because it directly answers "did my import work?" (the second half of the user's complaint) and is explicitly required by SPEC §2.2 NFR 5, not just a nicety. (4) is a smaller, purely additive polish item that rides along once the table is the landing view.
+
+Explicitly considered but deferred to a later pass (not blocking; revisit once the above is in daily use and there's a concrete reason to prioritize them):
+- Filter UI for the already-existing `GET /invoices` `month`/`categoryId` query params.
+- Pagination/sorting for large invoice lists.
+- A distinct "last successful sync" indicator separate from the full run history.
+- Any visual/styling polish beyond what's needed for the above.
+
+Tasks:
+- `src/db/sync-runs.ts` + schema addition, as described above.
+- `GET /sync/runs` (added to the Phase 5 Fastify app); `POST /sync` extended to record a run without changing its existing response shape.
+- UI: nav toggle, Invoices screen (table + summary bar + loading state), Import screen (existing date-range form + new recent-imports list).
+
+Tests:
+- `src/db/sync-runs.ts`: repository CRUD tests (create a run, update it to success/failure, list recent runs newest-first).
+- API: `GET /sync/runs` happy-path + auth-required test; a `POST /sync` test asserting a run row is created/updated around the existing sync behavior.
+- UI: component tests for the nav (switching between Invoices/Import), the recent-imports list, the loading state, and the summary bar.
+
+Definition of done: after logging in, the owner lands on the invoices table (not the import button) with a summary bar and a loading state; can navigate to a separate Import screen to trigger a new fetch and see a history of past import attempts (window, count, success/failure, timestamp); all new tests above pass alongside the existing suite.
+
+---
+
+## Phase 8 — Manual entry of exceptions (HU-02)
+
+**Goal:** Support entering costs that structurally cannot come from KSeF (foreign vendors, small receipts) — through the UI, completing the HU-01→HU-04 loop. Lands as its own nav item alongside Invoices/Import (Phase 7), not a new ad hoc screen.
 
 **Why this matters more than it might look (2026-07 real-data note):** the same May 2026 comparison found that even vendors with an *existing* Tier-1 rule (e.g. PGNiG, Castorama) had zero KSeF invoices that month — they were evidently paid by card/receipt instead. Manual entry isn't just for structurally-KSeF-incompatible vendors (foreign, small receipts); it should be designed as a routine, low-friction monthly activity.
 
@@ -218,7 +252,7 @@ Definition of done: all tests above pass; a person can perform the full HU-01→
 
 ---
 
-## Phase 8 — Deferred (not part of this plan's execution)
+## Phase 9 — Deferred (not part of this plan's execution)
 
 Tracked for later, per SPEC §5 — do not start without explicit request:
 - LLM categorization tier (Tier 2) behind the `CategorizationProvider` interface referenced in SPEC §4.
@@ -240,10 +274,11 @@ flowchart TD
     P3 --> P4[Phase 4: Categorization Rules]
     P4 --> P5[Phase 5: API + Read-only UI Prototype]
     P5 --> P6[Phase 6: Manual Corrections + Feedback Loop]
-    P6 --> P7[Phase 7: Manual Entry]
-    P7 -.deferred.-> P8[Phase 8: LLM, multi-location, etc.]
+    P6 --> P7[Phase 7: UX Foundations]
+    P7 --> P8[Phase 8: Manual Entry]
+    P8 -.deferred.-> P9[Phase 9: LLM, multi-location, etc.]
 ```
 
 Phases 3 and 4 may be interleaved with Phase 2 in practice (invoices need somewhere to land as soon as they're parsed), but the dependency order above must be respected — no phase should be considered done ahead of its prerequisites, and no phase's completion is claimed without passing tests per the conventions above.
 
-Phase 5 is now the key early feedback milestone (re-sequenced 2026-07, see note there) — everything it needs is already done (Phases 0–4), so it should start immediately. Phases 6 and 7 each ship a complete backend+API+UI slice rather than being split across separate "backend-only" and "UI-only" phases.
+Phase 5 was the key early feedback milestone (re-sequenced 2026-07); Phase 7 is a second, smaller replan triggered by the first hands-on use of that milestone (2026-07) — real usage surfaced navigation/visibility problems that no amount of unit testing would have caught, so the plan adapts again rather than pushing ahead to Phase 8 on a confusing base. Phases 6, 7, and 8 each ship a complete backend+API+UI slice rather than being split across separate "backend-only" and "UI-only" phases.
