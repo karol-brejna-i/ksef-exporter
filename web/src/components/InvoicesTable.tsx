@@ -14,7 +14,7 @@ export function InvoicesTable({ invoices, categories }: InvoicesTableProps) {
   }
 
   if (invoices.length === 0) {
-    return <p>No invoices yet. Click &ldquo;Fetch this month&rdquo; to pull invoices from KSeF.</p>;
+    return <p>No invoices yet. Click &ldquo;Import invoices&rdquo; to pull invoices from KSeF.</p>;
   }
 
   return (

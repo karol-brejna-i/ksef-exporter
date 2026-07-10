@@ -45,6 +45,6 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /log in/i }));
 
     expect(await screen.findByText("Energa Operator")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /fetch this month/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /import invoices/i })).toBeInTheDocument();
   });
 });

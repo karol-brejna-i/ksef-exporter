@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ChangeEvent, useState } from "react";
 import { ApiError, triggerSync } from "../api/client";
 
 export interface SyncButtonProps {
@@ -16,14 +16,25 @@ function currentMonthWindow(): { windowFrom: string; windowTo: string } {
 }
 
 export function SyncButton({ token, onSynced }: SyncButtonProps) {
+  // Defaults to the current month, but editable -- lets the owner import an
+  // arbitrary range (e.g. to backfill a missed month) instead of only ever
+  // being able to fetch "this month".
+  const [{ windowFrom, windowTo }, setWindow] = useState(currentMonthWindow);
   const [status, setStatus] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+
+  function handleFromChange(event: ChangeEvent<HTMLInputElement>): void {
+    setWindow((current) => ({ ...current, windowFrom: event.target.value }));
+  }
+
+  function handleToChange(event: ChangeEvent<HTMLInputElement>): void {
+    setWindow((current) => ({ ...current, windowTo: event.target.value }));
+  }
 
   async function handleClick(): Promise<void> {
     setSyncing(true);
     setStatus(null);
     try {
-      const { windowFrom, windowTo } = currentMonthWindow();
       const result = await triggerSync(token, windowFrom, windowTo);
       setStatus(`Synced ${result.invoiceCount} invoice(s).`);
       onSynced();
@@ -36,8 +47,32 @@ export function SyncButton({ token, onSynced }: SyncButtonProps) {
 
   return (
     <div>
-      <button type="button" onClick={() => void handleClick()} disabled={syncing}>
-        {syncing ? "Fetching…" : "Fetch this month"}
+      <label htmlFor="sync-window-from">
+        From
+        <input
+          id="sync-window-from"
+          type="date"
+          value={windowFrom}
+          max={windowTo}
+          onChange={handleFromChange}
+        />
+      </label>
+      <label htmlFor="sync-window-to">
+        To
+        <input
+          id="sync-window-to"
+          type="date"
+          value={windowTo}
+          min={windowFrom}
+          onChange={handleToChange}
+        />
+      </label>
+      <button
+        type="button"
+        onClick={() => void handleClick()}
+        disabled={syncing || !windowFrom || !windowTo}
+      >
+        {syncing ? "Importing…" : "Import invoices"}
       </button>
       {status && <p>{status}</p>}
     </div>
