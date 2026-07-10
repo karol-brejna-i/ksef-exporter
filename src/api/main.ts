@@ -1,3 +1,4 @@
+import "dotenv/config";
 import type { KsefClient } from "ksef-client";
 import { loadConfig } from "../config/env.js";
 import { createDb } from "../db/client.js";
