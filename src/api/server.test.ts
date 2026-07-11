@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { KsefRateLimitError } from "ksef-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCategory } from "../db/categories.js";
 import type { Db } from "../db/client.js";
@@ -12,6 +13,9 @@ const config = {
   AUTH_PASSWORD: "a-strong-password",
   JWT_SECRET: "a".repeat(32),
   WEB_ORIGIN: "http://localhost:5173",
+  // "silent" keeps test output clean; production defaults to "info" (see
+  // src/config/env.ts).
+  LOG_LEVEL: "silent" as const,
 };
 
 const SAMPLE_INVOICE = {
@@ -211,6 +215,7 @@ describe("API server", () => {
           windowFrom: "2025-01-01",
           windowTo: "2025-01-31",
         },
+        { logger: { info: expect.any(Function) } },
       );
     });
 
@@ -279,6 +284,31 @@ describe("API server", () => {
         status: "error",
         errorMessage: "rate limited, retry after 52m",
       });
+    });
+
+    it("returns a friendly rate-limit message with the KSeF status code and records it on the run", async () => {
+      sync.mockRejectedValueOnce(
+        new KsefRateLimitError(429, "Rate limit exceeded", null, "180", 180),
+      );
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      });
+
+      expect(response.statusCode).toBe(429);
+      expect((response.json() as { error: string }).error).toMatch(/retry after 3m00s/i);
+
+      const runsResponse = await fastify.inject({
+        method: "GET",
+        url: "/sync/runs",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const body = runsResponse.json() as { runs: Array<Record<string, unknown>> };
+      expect(body.runs[0]?.errorMessage).toMatch(/retry after 3m00s/i);
     });
   });
 

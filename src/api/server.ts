@@ -6,7 +6,7 @@ import Fastify, {
   type FastifyReply,
   type FastifyRequest,
 } from "fastify";
-import type { KsefClient } from "ksef-client";
+import { KsefApiError, type KsefClient } from "ksef-client";
 import { z } from "zod";
 import { correctInvoiceCategory, InvoiceNotFoundError } from "../categorization/correct.js";
 import type { AppConfig } from "../config/env.js";
@@ -19,6 +19,7 @@ import {
   markSyncRunError,
   markSyncRunSuccess,
 } from "../db/sync-runs.js";
+import { formatKsefError } from "../ksef/rate-limit.js";
 import { syncPurchaseInvoices } from "../sync.js";
 import { verifyCredentials } from "./auth.js";
 
@@ -30,7 +31,10 @@ declare module "fastify" {
 
 export interface BuildServerDeps {
   db: Db;
-  config: Pick<AppConfig, "AUTH_USERNAME" | "AUTH_PASSWORD" | "JWT_SECRET" | "WEB_ORIGIN">;
+  config: Pick<
+    AppConfig,
+    "AUTH_USERNAME" | "AUTH_PASSWORD" | "JWT_SECRET" | "WEB_ORIGIN" | "LOG_LEVEL"
+  >;
   /** Returns a connected KSeF client; injectable so tests never touch the network. */
   getClient: () => Promise<Pick<KsefClient, "workflows">>;
   /** Injectable for tests; defaults to the real `syncPurchaseInvoices`. */
@@ -69,7 +73,10 @@ const categoryCorrectionBodySchema = z.object({
  * `fastify.inject()` without a real KSeF connection or a real HTTP socket.
  */
 export function buildServer(deps: BuildServerDeps): FastifyInstance {
-  const fastify = Fastify({ logger: false });
+  // Logging was previously disabled entirely, which meant a long-running
+  // import gave zero feedback in the server console (see design/SPEC.md
+  // §2.2 NFR 5 / Phase 7 follow-up). LOG_LEVEL defaults to "info".
+  const fastify = Fastify({ logger: { level: deps.config.LOG_LEVEL } });
   const sync = deps.sync ?? syncPurchaseInvoices;
 
   fastify.register(jwt, { secret: deps.config.JWT_SECRET });
@@ -112,15 +119,28 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       return reply.code(400).send({ error: "windowFrom and windowTo are required" });
     }
 
+    request.log.info(parsed.data, "sync: requested");
     const run = await createSyncRun(deps.db, parsed.data);
     try {
       const client = await deps.getClient();
-      const result = await sync(deps.db, client, parsed.data);
+      const result = await sync(deps.db, client, parsed.data, {
+        logger: { info: (message, meta) => request.log.info(meta ?? {}, message) },
+      });
+      request.log.info({ invoiceCount: result.invoices.length }, "sync: succeeded");
       await markSyncRunSuccess(deps.db, run.id, result.invoices.length);
       return { invoiceCount: result.invoices.length };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "sync failed";
+      const message = formatKsefError(error);
+      request.log.error({ err: error }, "sync: failed");
       await markSyncRunError(deps.db, run.id, message);
+      // KsefApiError's statusCode reflects KSeF's own response (e.g. 429 for
+      // rate limiting); surface formatKsefError's friendlier message (with
+      // retry-after info) for those instead of the SDK's raw message. Genuine
+      // 5xx/unexpected errors still go through the generic error handler
+      // below, which hides internal details.
+      if (error instanceof KsefApiError && error.statusCode < 500) {
+        return reply.code(error.statusCode).send({ error: message });
+      }
       throw error;
     }
   });

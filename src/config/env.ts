@@ -34,6 +34,13 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   /** Origin the frontend is served from, allow-listed for CORS. */
   WEB_ORIGIN: z.string().trim().min(1).default("http://localhost:5173"),
+  /**
+   * Fastify/pino log level. "info" logs request lifecycle plus sync
+   * progress (fetching from KSeF, invoice counts, persisting, errors);
+   * "debug" adds per-request details. See design/IMPLEMENTATION_PLAN.md
+   * Phase 7 follow-up on import visibility.
+   */
+  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
 });
 
 export type AppConfig = Readonly<z.infer<typeof envSchema>>;

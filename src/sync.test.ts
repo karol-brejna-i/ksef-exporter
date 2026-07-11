@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { seedCategorizationRules } from "./categorization/seed-rules.js";
 import { createDb } from "./db/client.js";
 import { getInvoiceByKsefNumber, updateInvoiceCategory } from "./db/invoices.js";
@@ -167,6 +167,34 @@ describe("syncPurchaseInvoices", () => {
     );
 
     expect(capturedContinuationPoints).toEqual({ Subject2: "2025-01-31T00:00:00Z" });
+
+    sqlite.close();
+  });
+
+  it("reports progress via the injected logger", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record()],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+    const info = vi.fn();
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices, logger: { info } },
+    );
+
+    expect(info).toHaveBeenCalledWith("sync: requesting export from KSeF", expect.any(Object));
+    expect(info).toHaveBeenCalledWith(
+      "sync: received invoices from KSeF, persisting",
+      expect.objectContaining({ count: 1 }),
+    );
+    expect(info).toHaveBeenCalledWith("sync: complete", expect.any(Object));
 
     sqlite.close();
   });

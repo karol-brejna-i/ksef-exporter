@@ -24,7 +24,20 @@ describe("loadConfig", () => {
       JWT_SECRET: "a".repeat(32),
       PORT: 3000,
       WEB_ORIGIN: "http://localhost:5173",
+      LOG_LEVEL: "info",
     });
+  });
+
+  it("defaults LOG_LEVEL to info when omitted", () => {
+    const config = loadConfig(validEnv);
+
+    expect(config.LOG_LEVEL).toBe("info");
+  });
+
+  it("honors a custom LOG_LEVEL", () => {
+    const config = loadConfig({ ...validEnv, LOG_LEVEL: "debug" });
+
+    expect(config.LOG_LEVEL).toBe("debug");
   });
 
   it("defaults KSEF_ENVIRONMENT to TEST when omitted", () => {

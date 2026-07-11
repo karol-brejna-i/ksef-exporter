@@ -23,9 +23,23 @@ export interface SyncPurchaseInvoicesResult {
   invoices: InvoiceRow[];
 }
 
+/**
+ * Minimal logging interface (satisfied by both Fastify's `request.log` and
+ * plain `console`) so callers can see sync progress -- there's otherwise no
+ * feedback while the KSeF export/poll/download cycle runs, which can take
+ * a while and gives no indication anything is happening.
+ */
+export interface SyncLogger {
+  info: (message: string, meta?: Record<string, unknown>) => void;
+}
+
+const noopLogger: SyncLogger = { info: () => {} };
+
 export interface SyncPurchaseInvoicesDeps {
   /** Injectable for tests; defaults to the real `fetchPurchaseInvoices`. */
   fetchInvoices?: typeof fetchPurchaseInvoices;
+  /** Injectable for tests; defaults to a no-op logger. */
+  logger?: SyncLogger;
 }
 
 /**
@@ -44,16 +58,25 @@ export async function syncPurchaseInvoices(
   deps: SyncPurchaseInvoicesDeps = {},
 ): Promise<SyncPurchaseInvoicesResult> {
   const fetchInvoices = deps.fetchInvoices ?? fetchPurchaseInvoices;
+  const logger = deps.logger ?? noopLogger;
 
   const storedContinuationPoint = await getContinuationPoint(db, SUBJECT_TYPE);
   const continuationPoints: ContinuationPoints =
     storedContinuationPoint != null ? { [SUBJECT_TYPE]: storedContinuationPoint } : {};
 
+  logger.info("sync: requesting export from KSeF", {
+    windowFrom: options.windowFrom,
+    windowTo: options.windowTo,
+    resumingFrom: storedContinuationPoint ?? null,
+  });
   const fetchResult = await fetchInvoices(client, {
     windowFrom: options.windowFrom,
     windowTo: options.windowTo,
     continuationPoints,
     ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
+  });
+  logger.info("sync: received invoices from KSeF, persisting", {
+    count: fetchResult.invoices.length,
   });
 
   const rules = await listRules(db);
@@ -78,6 +101,10 @@ export async function syncPurchaseInvoices(
 
   const newContinuationPoint = fetchResult.continuationPoints[SUBJECT_TYPE];
   await setContinuationPoint(db, SUBJECT_TYPE, newContinuationPoint ?? null);
+  logger.info("sync: complete", {
+    persistedCount: invoices.length,
+    newContinuationPoint: newContinuationPoint ?? null,
+  });
 
   return { invoices };
 }
