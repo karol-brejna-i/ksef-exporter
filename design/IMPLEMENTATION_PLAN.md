@@ -228,6 +228,8 @@ Tests:
 
 Definition of done: after logging in, the owner lands on the invoices table (not the import button) with a summary bar and a loading state; can navigate to a separate Import screen to trigger a new fetch and see a history of past import attempts (window, count, success/failure, timestamp); all new tests above pass alongside the existing suite.
 
+**Status: done.** `App.tsx` now defaults to the Invoices screen (a simple `nav` toggle switches to Import, no routing library) and shows "Loading invoices…" during the initial fetch instead of a blank page. New `sync_runs` table (`src/db/schema.ts`, migration `0001_reflective_jane_foster.sql`) + repository (`src/db/sync-runs.ts`: `createSyncRun`, `markSyncRunSuccess`, `markSyncRunError`, `listRecentSyncRuns`) records every import attempt with its window, resulting invoice count, and success/failure + error message. `POST /sync` creates a run row before calling KSeF and updates it with the outcome (re-throwing on error so the existing error-handling/status-code behavior is unchanged); new `GET /sync/runs` endpoint lists the 20 most recent runs. New `RecentImports` component renders that history on the Import screen; new `InvoicesSummary` component shows total invoice count, `needs_review` count, and per-currency gross totals above the table. 110 backend tests passing (5 new in `src/db/sync-runs.test.ts`, 4 new in `src/api/server.test.ts`), 29 frontend tests passing (`InvoicesSummary.test.tsx`, `RecentImports.test.tsx`, updated `App.test.tsx`/`client.test.ts`). Typecheck and lint clean on both packages.
+
 ---
 
 ## Phase 8 — Manual entry of exceptions (HU-02)
