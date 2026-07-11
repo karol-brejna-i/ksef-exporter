@@ -126,9 +126,16 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       const result = await sync(deps.db, client, parsed.data, {
         logger: { info: (message, meta) => request.log.info(meta ?? {}, message) },
       });
-      request.log.info({ invoiceCount: result.invoices.length }, "sync: succeeded");
+      request.log.info(
+        { invoiceCount: result.invoices.length, hasMore: result.hasMore },
+        "sync: succeeded",
+      );
       await markSyncRunSuccess(deps.db, run.id, result.invoices.length);
-      return { invoiceCount: result.invoices.length };
+      // hasMore: KSeF only lets a single sync fetch one export page (see
+      // syncPurchaseInvoices' doc comment) -- the frontend surfaces this so
+      // the owner knows to click Import again rather than assuming a single
+      // click always catches up the whole requested window.
+      return { invoiceCount: result.invoices.length, hasMore: result.hasMore };
     } catch (error) {
       const message = formatKsefError(error);
       request.log.error({ err: error }, "sync: failed");

@@ -198,4 +198,77 @@ describe("syncPurchaseInvoices", () => {
 
     sqlite.close();
   });
+
+  it("defaults maxIterations to 1 so a single call only fetches one KSeF export page", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = vi.fn(
+      async (): Promise<FetchPurchaseInvoicesResult> => ({
+        invoices: [],
+        continuationPoints: {},
+        referenceNumbers: [],
+      }),
+    );
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    expect(fetchInvoices).toHaveBeenCalledWith(
+      fakeClient(),
+      expect.objectContaining({ maxIterations: 1 }),
+    );
+
+    sqlite.close();
+  });
+
+  it("reports hasMore when the new continuation point hasn't reached windowTo yet", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      // Truncated/partial page: KSeF's HWM only advanced to the 15th, well
+      // short of the requested windowTo (the 31st).
+      continuationPoints: { Subject2: "2025-01-15T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    expect(result.hasMore).toBe(true);
+
+    sqlite.close();
+  });
+
+  it("reports hasMore as false once the continuation point reaches windowTo", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2025-01-31" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    expect(result.hasMore).toBe(false);
+
+    sqlite.close();
+  });
 });

@@ -44,6 +44,21 @@ describe("SyncButton", () => {
     expect(await screen.findByText("Synced 2 invoice(s).")).toBeInTheDocument();
   });
 
+  it("hints that more invoices are available and to import again when hasMore is true", async () => {
+    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ invoiceCount: 3, hasMore: true });
+    const onSynced = vi.fn();
+    const user = userEvent.setup();
+
+    render(<SyncButton token="jwt-token" onSynced={onSynced} />);
+    await user.click(screen.getByRole("button", { name: /import invoices/i }));
+
+    expect(
+      await screen.findByText(
+        "Synced 3 invoice(s). More invoices are available in this window — click Import again to continue.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows an error message and does not call onSynced when the sync fails", async () => {
     vi.spyOn(apiClient, "triggerSync").mockRejectedValue(
       new apiClient.ApiError("rate limited, retry later", 429),

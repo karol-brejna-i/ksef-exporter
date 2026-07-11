@@ -85,7 +85,7 @@ export function triggerSync(
   token: string,
   windowFrom: string,
   windowTo: string,
-): Promise<{ invoiceCount: number }> {
+): Promise<{ invoiceCount: number; hasMore?: boolean }> {
   return request(
     "/sync",
     { method: "POST", body: JSON.stringify({ windowFrom, windowTo }) },

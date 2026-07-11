@@ -45,7 +45,9 @@ describe("API server", () => {
     // syncPurchaseInvoices is itself mocked below, so the client it would be
     // called with never needs to satisfy the real KsefClient shape.
     getClient = vi.fn(async () => ({ workflows: {} }) as never);
-    sync = vi.fn(async (): Promise<SyncPurchaseInvoicesResult> => ({ invoices: [] }));
+    sync = vi.fn(
+      async (): Promise<SyncPurchaseInvoicesResult> => ({ invoices: [], hasMore: false }),
+    );
     fastify = buildServer({ db, config, getClient, sync });
   });
 
@@ -196,6 +198,7 @@ describe("API server", () => {
     it("invokes the injected sync function and returns the invoice count", async () => {
       sync.mockResolvedValueOnce({
         invoices: [{ id: 1 }, { id: 2 }],
+        hasMore: false,
       } as unknown as SyncPurchaseInvoicesResult);
       const token = await login();
 
@@ -207,7 +210,7 @@ describe("API server", () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({ invoiceCount: 2 });
+      expect(response.json()).toEqual({ invoiceCount: 2, hasMore: false });
       expect(sync).toHaveBeenCalledWith(
         db,
         { workflows: {} },
@@ -217,6 +220,23 @@ describe("API server", () => {
         },
         { logger: { info: expect.any(Function) } },
       );
+    });
+
+    it("returns hasMore: true when more invoices are likely still available in the window", async () => {
+      sync.mockResolvedValueOnce({
+        invoices: [{ id: 1 }],
+        hasMore: true,
+      } as unknown as SyncPurchaseInvoicesResult);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      });
+
+      expect(response.json()).toEqual({ invoiceCount: 1, hasMore: true });
     });
 
     it("rejects a request missing windowFrom/windowTo with 400", async () => {

@@ -36,7 +36,10 @@ export function SyncButton({ token, onSynced }: SyncButtonProps) {
     setStatus(null);
     try {
       const result = await triggerSync(token, windowFrom, windowTo);
-      setStatus(`Synced ${result.invoiceCount} invoice(s).`);
+      const moreHint = result.hasMore
+        ? " More invoices are available in this window \u2014 click Import again to continue."
+        : "";
+      setStatus(`Synced ${result.invoiceCount} invoice(s).${moreHint}`);
       onSynced();
     } catch (err) {
       setStatus(err instanceof ApiError ? err.message : "Sync failed");
