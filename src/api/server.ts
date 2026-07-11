@@ -13,6 +13,12 @@ import type { AppConfig } from "../config/env.js";
 import { listCategories } from "../db/categories.js";
 import type { Db } from "../db/client.js";
 import { listInvoices } from "../db/invoices.js";
+import {
+  createSyncRun,
+  listRecentSyncRuns,
+  markSyncRunError,
+  markSyncRunSuccess,
+} from "../db/sync-runs.js";
 import { syncPurchaseInvoices } from "../sync.js";
 import { verifyCredentials } from "./auth.js";
 
@@ -106,9 +112,22 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       return reply.code(400).send({ error: "windowFrom and windowTo are required" });
     }
 
-    const client = await deps.getClient();
-    const result = await sync(deps.db, client, parsed.data);
-    return { invoiceCount: result.invoices.length };
+    const run = await createSyncRun(deps.db, parsed.data);
+    try {
+      const client = await deps.getClient();
+      const result = await sync(deps.db, client, parsed.data);
+      await markSyncRunSuccess(deps.db, run.id, result.invoices.length);
+      return { invoiceCount: result.invoices.length };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "sync failed";
+      await markSyncRunError(deps.db, run.id, message);
+      throw error;
+    }
+  });
+
+  fastify.get("/sync/runs", { onRequest: [fastify.authenticate] }, async () => {
+    const runs = await listRecentSyncRuns(deps.db);
+    return { runs };
   });
 
   fastify.get("/invoices", { onRequest: [fastify.authenticate] }, async (request, reply) => {

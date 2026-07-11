@@ -18,6 +18,7 @@ describe("createDb", () => {
         "categories",
         "categorization_rules",
         "invoices",
+        "sync_runs",
         "sync_state",
       ]);
     } finally {

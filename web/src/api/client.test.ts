@@ -4,6 +4,7 @@ import {
   correctCategory,
   fetchCategories,
   fetchInvoices,
+  fetchSyncRuns,
   login,
   triggerSync,
 } from "./client";
@@ -99,5 +100,24 @@ describe("api client", () => {
         body: JSON.stringify({ categoryId: 2 }),
       }),
     );
+  });
+
+  it("fetches recent sync runs", async () => {
+    const runs = [
+      {
+        id: 1,
+        requestedAt: "2025-01-16T00:00:00.000Z",
+        windowFrom: "2025-01-01",
+        windowTo: "2025-01-31",
+        status: "success",
+        invoiceCount: 5,
+        errorMessage: null,
+      },
+    ];
+    mockFetch(200, { runs });
+
+    const result = await fetchSyncRuns("jwt-token");
+
+    expect(result).toEqual({ runs });
   });
 });

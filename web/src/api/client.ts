@@ -32,6 +32,18 @@ export interface Invoice {
   createdAt: string;
 }
 
+export type SyncRunStatus = "running" | "success" | "error";
+
+export interface SyncRun {
+  id: number;
+  requestedAt: string;
+  windowFrom: string;
+  windowTo: string;
+  status: SyncRunStatus;
+  invoiceCount: number | null;
+  errorMessage: string | null;
+}
+
 /**
  * Requests go through the `/api` prefix, proxied to the backend by Vite in
  * dev (see vite.config.ts) so the app only ever talks to a single origin.
@@ -91,4 +103,8 @@ export function correctCategory(
     { method: "PATCH", body: JSON.stringify({ categoryId }) },
     token,
   );
+}
+
+export function fetchSyncRuns(token: string): Promise<{ runs: SyncRun[] }> {
+  return request("/sync/runs", {}, token);
 }

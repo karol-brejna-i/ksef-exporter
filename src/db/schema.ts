@@ -89,3 +89,24 @@ export const syncState = sqliteTable("sync_state", {
   /** ISO date-time continuation point, or null before the first sync. */
   continuationPoint: text("continuation_point"),
 });
+
+/**
+ * A record of each triggered import (HU-01), so the owner can confirm an
+ * import happened and how it went (SPEC §2.2 NFR 5, Phase 7) instead of
+ * only ever seeing the resulting invoices with no trace of the request
+ * that produced them.
+ */
+export const syncRuns = sqliteTable("sync_runs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  requestedAt: text("requested_at").notNull().default(sql`(current_timestamp)`),
+  windowFrom: text("window_from").notNull(),
+  windowTo: text("window_to").notNull(),
+  /** "running" until the sync call resolves, then "success" or "error". */
+  status: text("status", { enum: ["running", "success", "error"] })
+    .notNull()
+    .default("running"),
+  /** Set once `status` is "success". */
+  invoiceCount: integer("invoice_count"),
+  /** Set once `status` is "error". */
+  errorMessage: text("error_message"),
+});

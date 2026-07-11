@@ -37,3 +37,47 @@ form input {
 [role="alert"] {
   color: #b00020;
 }
+
+nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+nav button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #ccc;
+  background: #f5f5f5;
+  cursor: pointer;
+}
+
+nav button[aria-current="page"] {
+  background: #1a1a1a;
+  color: #fff;
+  border-color: #1a1a1a;
+}
+
+.summary-bar {
+  display: flex;
+  gap: 2rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+}
+
+.summary-bar > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-bar dt {
+  font-size: 0.8rem;
+  color: #555;
+}
+
+.summary-bar dd {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}

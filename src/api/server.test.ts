@@ -227,6 +227,80 @@ describe("API server", () => {
       expect(response.statusCode).toBe(400);
       expect(getClient).not.toHaveBeenCalled();
     });
+
+    it("records a successful sync run", async () => {
+      sync.mockResolvedValueOnce({
+        invoices: [{ id: 1 }],
+      } as unknown as SyncPurchaseInvoicesResult);
+      const token = await login();
+
+      await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      });
+
+      const runsResponse = await fastify.inject({
+        method: "GET",
+        url: "/sync/runs",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const body = runsResponse.json() as { runs: Array<Record<string, unknown>> };
+      expect(body.runs).toHaveLength(1);
+      expect(body.runs[0]).toMatchObject({
+        windowFrom: "2025-01-01",
+        windowTo: "2025-01-31",
+        status: "success",
+        invoiceCount: 1,
+      });
+    });
+
+    it("records a failed sync run and still propagates the error", async () => {
+      sync.mockRejectedValueOnce(new Error("rate limited, retry after 52m"));
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      });
+
+      expect(response.statusCode).toBe(500);
+
+      const runsResponse = await fastify.inject({
+        method: "GET",
+        url: "/sync/runs",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const body = runsResponse.json() as { runs: Array<Record<string, unknown>> };
+      expect(body.runs[0]).toMatchObject({
+        status: "error",
+        errorMessage: "rate limited, retry after 52m",
+      });
+    });
+  });
+
+  describe("GET /sync/runs", () => {
+    it("rejects a request without a token", async () => {
+      const response = await fastify.inject({ method: "GET", url: "/sync/runs" });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("returns an empty list when no imports have been triggered yet", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/sync/runs",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ runs: [] });
+    });
   });
 
   describe("PATCH /invoices/:id/category", () => {
