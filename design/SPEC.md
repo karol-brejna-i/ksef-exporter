@@ -1,5 +1,7 @@
 # KSeF Exporter — Technical Specification
 
+**Last updated:** 2026-08-10 15:53
+
 **Status:** Draft — business context and integration mechanics agreed; implementation plan defined in [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md).
 **Audience:** Developers / AI coding agents implementing this system.
 **Source:** Derived from `design/Specyfikacja Automatyzacji KSeF V5 (Koncepcja, Biznes i Pełne Dane).md` (original Polish business spec) plus a mechanics discussion, translated and formalized.
@@ -14,7 +16,7 @@
 
 **Solution:** A self-hosted web application that:
 1. Pulls purchase invoices directly from **KSeF** (Poland's national e-invoicing system), removing manual data entry.
-2. Categorizes each invoice/expense automatically using a **hybrid rules-then-AI engine** (deterministic rules first; an LLM fallback for anything rules don't confidently match — LLM support is a "nice to have," deferred, but the engine must be designed so a provider can be plugged in later without rework).
+2. Categorizes each invoice/expense using deterministic rules first. An LLM fallback for unmatched items is deferred; when introduced, it must be isolated behind a provider interface rather than coupled to a vendor.
 3. Presents results in a simple, login-protected UI where a human can review, correct, and confirm categorization.
 4. Allows manual entry of costs that structurally cannot come from KSeF (see §2.3).
 
@@ -71,7 +73,7 @@
 - **Payroll ("Wypłaty"):** Wages never appear in KSeF; historically tracked in the same spreadsheet but **out of scope** for this system for now — manual entry only if ever needed, no dedicated import.
 - **Sales/turnover invoices:** Only **purchase** invoices are pulled from KSeF. Turnover/revenue figures are tracked separately, outside this system.
 - **Multi-location support:** Single location ("Parkowa") only; keep the data model reasonably open to this later but do not build it now.
-- **LLM categorization:** Rules-first engine is required for v1; LLM fallback is a planned extension, built behind a provider-agnostic interface (see §4.6) but not required to be functional in the first working engine.
+- **LLM categorization:** Rules-first engine is required for v1. LLM fallback is a planned extension; its provider-agnostic interface should be introduced with that extension, not maintained speculatively before it has a caller.
 
 ### 2.6 Reference categorization rules (seed data, from historical spreadsheet analysis)
 
@@ -161,7 +163,7 @@ Each invoice XML (FA(2)/FA(3) logical structure) should be parsed into (at minim
 
 ### 3.5 Technology choice
 
-- **Backend:** Node.js / TypeScript.
+- **Backend:** Node.js ≥ 22.13 / TypeScript. The KSeF SDK itself supports Node.js ≥ 20, but the repository's pinned pnpm 11 runtime requires Node.js ≥ 22.13; `.nvmrc` is authoritative for local development.
 - **Package manager:** pnpm.
 - **Lint/format:** Biome (single tool, replaces ESLint + Prettier).
 - **KSeF client library:** [`ksef-client`](https://github.com/smekcio/ksef-client-typescript) (npm package `ksef-client`), a community-maintained, MIT-licensed TypeScript SDK targeting KSeF API v2.6.0. Covers KSeF-token authentication, XAdES certificate authentication, and export/incremental-export workflows — i.e., everything described in §3.1–§3.2.
@@ -175,9 +177,9 @@ Each invoice XML (FA(2)/FA(3) logical structure) should be parsed into (at minim
 
 - **Tier 1 (rules):** Match on seller NIP (preferred, stable identifier) and/or seller name (fallback/bootstrapping, using the seed rules in §2.6). Every successful rule match should be flagged as "confident" in the UI (per HU-03).
   - **Validated (2026-07):** preferring NIP already avoids a real issue seen in production data — the same legal entity can appear with slightly different name formatting across invoices (e.g. `P4 sp. z o.o.` vs `P4 sp. z o. o.`). No name-normalization/synonyms layer is needed as long as NIP matching stays the primary path.
-- **Tier 2 (LLM, future):** Only invoked for invoices that don't match any Tier 1 rule. Must be implemented behind a **provider-agnostic interface** (e.g. a `CategorizationProvider` abstraction) so any LLM vendor (OpenAI, Anthropic, local models, etc.) can be plugged in later without touching the rest of the engine. Not required to be functional for the first working engine.
+- **Tier 2 (LLM, future):** Only invoked for invoices that don't match any Tier 1 rule. When implemented, place it behind a **provider-agnostic interface** (e.g. a `CategorizationProvider` abstraction) so any LLM vendor (OpenAI, Anthropic, local models, etc.) can be plugged in without touching the rest of the engine. No unused provider abstraction is required before Tier 2 work starts.
 - **Tier 3 (human correction):** When a user changes a category via the UI (HU-04), the system should offer to persist this as a new Tier 1 rule (e.g. "always categorize invoices from this seller NIP as X"), closing the feedback loop and reducing future LLM/manual-review load.
-- **Manual entries (HU-02):** Structurally similar to a KSeF-derived invoice record but flagged with a distinct `source` (e.g. `manual` vs `ksef`), so reporting/aggregation logic doesn't need to special-case them.
+- **Manual entries (HU-02):** Structurally similar to a KSeF-derived invoice record but flagged with a distinct `source` (e.g. `manual` vs `ksef`), so reporting/aggregation logic doesn't need to special-case them. The user chooses a required category directly; the entry is stored as confirmed (`matched`) without invoking the rules engine or creating a future seller rule.
 
 ---
 

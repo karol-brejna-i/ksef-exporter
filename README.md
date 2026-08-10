@@ -1,5 +1,7 @@
 # KSeF Exporter
 
+**Last updated:** 2026-08-10 15:53
+
 Self-hosted app that pulls purchase invoices from KSeF, categorizes them, and supports manual
 correction. See [`design/SPEC.md`](./design/SPEC.md) for the business context and
 [`design/IMPLEMENTATION_PLAN.md`](./design/IMPLEMENTATION_PLAN.md) for the build plan/status.
@@ -12,7 +14,7 @@ This is a two-part app:
 
 ## Prerequisites
 
-- Node.js ≥ 20
+- Node.js ≥ 22.13 (use the version in `.nvmrc`)
 - pnpm (pinned via `packageManager` in `package.json`; run `corepack enable` if `pnpm` isn't
   already installed)
 

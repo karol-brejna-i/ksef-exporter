@@ -1,5 +1,7 @@
 # KSeF Exporter — Implementation Plan
 
+**Last updated:** 2026-08-10 16:10
+
 **Companion document to** [`SPEC.md`](./SPEC.md). Read that first for the business context and KSeF integration mechanics — this document is the step-by-step build order.
 
 **Audience:** Developers / AI coding agents implementing this system.
@@ -11,12 +13,20 @@
 - **Testing is mandatory, not optional.** Every feature or change implemented from this plan must ship with automated tests covering it. A feature is only considered "done" once its tests exist **and pass** (verified by actually running them). Never report a phase/task as complete without this.
 - **Test framework:** [Vitest](https://vitest.dev/).
 - **No real network calls to KSeF in unit tests.** All KSeF HTTP interactions must be mockable/injectable (e.g. via `ksef-client`'s options or an HTTP mocking layer) so the default test run is fast, deterministic, and doesn't depend on external systems. Optional integration tests against `https://api-test.ksef.mf.gov.pl` may be added later, gated behind an environment variable so they don't run by default.
-- **Language/runtime:** TypeScript, Node.js ≥ 20 (required by `ksef-client`).
+- **Language/runtime:** TypeScript, Node.js ≥ 22.13 (`ksef-client` requires ≥ 20, but the pinned pnpm 11 runtime requires ≥ 22.13). Use the version in `.nvmrc`.
 - **Package manager:** pnpm.
 - **Linting/formatting:** [Biome](https://biomejs.dev/) — a single fast tool replacing ESLint + Prettier; type-aware checks are still covered separately via `tsc --noEmit` (`pnpm run typecheck`).
 - **Database:** SQLite via [Drizzle ORM](https://orm.drizzle.team/) — zero-ops, fits self-hosted single-user deployment; swappable later if multi-user/cloud requires it.
 - **API layer (from Phase 5 onward):** [Fastify](https://fastify.io/) — lightweight, TypeScript-friendly.
 - **Structure:** start as a single package (root-level `src/`) organized by domain module. A separate frontend app is introduced at Phase 5 (as soon as there's something worth looking at); restructure into a workspace at that point if needed, not before.
+
+## Current implementation status
+
+Phases 0–7 are implemented. Phase 8 is the next active phase; its shared persistence primitive (`insertManualInvoice`) and `source = "manual"` schema support already exist from Phase 3, but there is no manual-entry domain service, API route, form, or feature-level test yet. Phase 9 remains explicitly deferred.
+
+Before investigating or changing the previously problematic KSeF quota behavior, implement the separate [`IMPORT_OBSERVABILITY_PLAN.md`](./IMPORT_OBSERVABILITY_PLAN.md) workstream. It improves import logging, durable diagnostics, and traceability without changing quota, retry, continuation, or export-window behavior. This preparatory workstream does not renumber or replace Phase 8.
+
+Verified on 2026-08-10 with Node 22.23.1: 118 backend tests and 30 frontend tests pass; backend and frontend typechecks pass. Biome passes for tracked source files (the only warning is the oversized, untracked `design/chat.json` chat export, which must not be committed).
 
 ---
 
@@ -241,16 +251,17 @@ Definition of done: after logging in, the owner lands on the invoices table (not
 **Why this matters more than it might look (2026-07 real-data note):** the same May 2026 comparison found that even vendors with an *existing* Tier-1 rule (e.g. PGNiG, Castorama) had zero KSeF invoices that month — they were evidently paid by card/receipt instead. Manual entry isn't just for structurally-KSeF-incompatible vendors (foreign, small receipts); it should be designed as a routine, low-friction monthly activity.
 
 Tasks:
-- `src/invoices/manual-entry.ts`: create an invoice-like record with `source = "manual"` and user-supplied fields (seller name, amount, date, category — category can be chosen directly, bypassing the rules engine, or still run through it for consistency — decide during implementation and document the choice).
-- Validation: required fields, sane amount/date formats.
+- `src/invoices/manual-entry.ts`: create an invoice-like record with `source = "manual"` and user-supplied document/invoice number, seller name, amount, date, currency, and category; seller NIP is optional. Reuse the existing `insertManualInvoice` persistence primitive rather than adding another storage path.
+- **Categorization decision:** category is required and chosen directly by the user. Store the entry with `categorizationConfidence = "matched"`; do not run the rules engine and do not create a seller rule. A manually entered receipt is a specific accounting decision and is not reliable evidence that every future invoice from that seller belongs to the same category.
+- Validation: non-empty document number and seller name, positive finite amount, real ISO calendar date (`YYYY-MM-DD`), three-letter currency code (the UI defaults to `PLN`), and an existing category.
 - `POST /invoices/manual` API endpoint (added to the Phase 5 Fastify app) invoking the above.
-- A manual-entry form in the UI calling the new endpoint.
+- A manual-entry form in the UI calling the new endpoint, added as a third nav item. Keep the existing component-level navigation; adding this screen alone does not justify a routing dependency without URL/deep-link requirements.
 
 Tests:
 - A manually entered record is stored correctly and appears alongside KSeF-sourced invoices in the same query/reporting path (per SPEC §4, `source` distinguishes but doesn't fork logic).
 - Invalid input (missing amount, malformed date, etc.) is rejected with a clear validation error.
 - API: happy path + validation/error-path test for `POST /invoices/manual`.
-- UI: component test for the manual-entry form interaction. At least one end-to-end happy-path test (e.g. login → view invoices → correct a category → add a manual entry) if a suitable lightweight E2E tool is introduced by this point; otherwise document this as a known gap rather than silently skipping it.
+- UI: component test for the manual-entry form interaction, plus an `App` integration test covering login → manual-entry screen → submit → invoice list refresh. Do not introduce a browser E2E dependency solely for this phase; verification against a running backend remains a documented manual smoke check.
 
 Definition of done: all tests above pass; a person can perform the full HU-01→HU-04 loop through the UI alone against a running backend.
 
@@ -259,7 +270,7 @@ Definition of done: all tests above pass; a person can perform the full HU-01→
 ## Phase 9 — Deferred (not part of this plan's execution)
 
 Tracked for later, per SPEC §5 — do not start without explicit request:
-- LLM categorization tier (Tier 2) behind the `CategorizationProvider` interface referenced in SPEC §4.
+- LLM categorization tier (Tier 2), introducing a provider interface when this work starts (no speculative interface is required in v1).
 - Multi-location/multi-entity support.
 - Sales/turnover invoice ingestion.
 - Payroll import/automation.

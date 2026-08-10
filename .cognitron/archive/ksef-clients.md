@@ -1,4 +1,4 @@
-https://github.com/CIRFMF/ksef-api - markdown documents describing all aspedts of KSeF 2.0.
+https://github.com/CIRFMF/ksef-api - markdown documents describing all aspects of KSeF 2.0.
 
 
 

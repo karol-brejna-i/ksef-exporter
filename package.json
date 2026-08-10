@@ -5,7 +5,7 @@
   "description": "Self-hosted app that pulls purchase invoices from KSeF, categorizes them, and supports manual correction.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "packageManager": "pnpm@11.10.0",
   "scripts": {
