@@ -1,3 +1,4 @@
+import type { Writable } from "node:stream";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import Fastify, {
@@ -19,7 +20,8 @@ import {
   markSyncRunError,
   markSyncRunSuccess,
 } from "../db/sync-runs.js";
-import { formatKsefError } from "../ksef/rate-limit.js";
+import { getContinuationPoint } from "../db/sync-state.js";
+import { classifyKsefError } from "../ksef/rate-limit.js";
 import { syncPurchaseInvoices } from "../sync.js";
 import { verifyCredentials } from "./auth.js";
 
@@ -39,6 +41,10 @@ export interface BuildServerDeps {
   getClient: () => Promise<Pick<KsefClient, "workflows">>;
   /** Injectable for tests; defaults to the real `syncPurchaseInvoices`. */
   sync?: typeof syncPurchaseInvoices;
+  /** Injectable clock for deterministic lifecycle timing tests. */
+  now?: () => number;
+  /** Injectable Pino destination for structured log assertions. */
+  logStream?: Writable;
 }
 
 const loginBodySchema = z.object({
@@ -76,8 +82,13 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
   // Logging was previously disabled entirely, which meant a long-running
   // import gave zero feedback in the server console (see design/SPEC.md
   // §2.2 NFR 5 / Phase 7 follow-up). LOG_LEVEL defaults to "info".
-  const fastify = Fastify({ logger: { level: deps.config.LOG_LEVEL } });
+  const fastify = Fastify({
+    logger: deps.logStream
+      ? { level: deps.config.LOG_LEVEL, stream: deps.logStream }
+      : { level: deps.config.LOG_LEVEL },
+  });
   const sync = deps.sync ?? syncPurchaseInvoices;
+  const now = deps.now ?? Date.now;
 
   fastify.register(jwt, { secret: deps.config.JWT_SECRET });
   fastify.register(cors, { origin: deps.config.WEB_ORIGIN });
@@ -119,36 +130,74 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       return reply.code(400).send({ error: "windowFrom and windowTo are required" });
     }
 
-    request.log.info(parsed.data, "sync: requested");
-    const run = await createSyncRun(deps.db, parsed.data);
+    const startedAtMs = now();
+    const continuationBefore = await getContinuationPoint(deps.db, "Subject2");
+    const run = await createSyncRun(deps.db, {
+      ...parsed.data,
+      startedAt: new Date(startedAtMs).toISOString(),
+      continuationBefore: continuationBefore ?? null,
+      maxIterations: 1,
+    });
+    const syncLog = request.log.child({ syncRunId: run.id });
+    const info = (event: string, meta: Record<string, unknown> = {}) =>
+      syncLog.info({ event, ...meta }, event);
+    info("sync.started", { ...parsed.data, continuationBefore: continuationBefore ?? null });
     try {
+      const clientStartedAt = now();
+      info("sync.client.started");
       const client = await deps.getClient();
+      info("sync.client.completed", { durationMs: now() - clientStartedAt });
       const result = await sync(deps.db, client, parsed.data, {
-        logger: { info: (message, meta) => request.log.info(meta ?? {}, message) },
+        logger: { info },
       });
-      request.log.info(
-        { invoiceCount: result.invoices.length, hasMore: result.hasMore },
-        "sync: succeeded",
-      );
-      await markSyncRunSuccess(deps.db, run.id, result.invoices.length);
+      const completedAtMs = now();
+      const durationMs = completedAtMs - startedAtMs;
+      await markSyncRunSuccess(deps.db, run.id, {
+        completedAt: new Date(completedAtMs).toISOString(),
+        durationMs,
+        invoiceCount: result.invoices.length,
+        continuationAfter: result.diagnostics.continuationAfter,
+        fetchedCount: result.diagnostics.fetchedCount,
+        insertedCount: result.diagnostics.insertedCount,
+        duplicateCount: result.diagnostics.duplicateCount,
+        categorizedCount: result.diagnostics.categorizedCount,
+        needsReviewCount: result.diagnostics.needsReviewCount,
+        hasMore: result.hasMore,
+      });
+      info("sync.completed", {
+        durationMs,
+        invoiceCount: result.invoices.length,
+        hasMore: result.hasMore,
+        ...result.diagnostics,
+      });
       // hasMore: KSeF only lets a single sync fetch one export page (see
       // syncPurchaseInvoices' doc comment) -- the frontend surfaces this so
       // the owner knows to click Import again rather than assuming a single
       // click always catches up the whole requested window.
-      return { invoiceCount: result.invoices.length, hasMore: result.hasMore };
+      return { syncRunId: run.id, invoiceCount: result.invoices.length, hasMore: result.hasMore };
     } catch (error) {
-      const message = formatKsefError(error);
-      request.log.error({ err: error }, "sync: failed");
-      await markSyncRunError(deps.db, run.id, message);
+      const completedAtMs = now();
+      const durationMs = completedAtMs - startedAtMs;
+      const diagnostics = classifyKsefError(error);
+      await markSyncRunError(deps.db, run.id, {
+        completedAt: new Date(completedAtMs).toISOString(),
+        durationMs,
+        errorMessage: diagnostics.message,
+        errorType: diagnostics.errorType,
+        errorCode: diagnostics.errorCode,
+        httpStatus: diagnostics.httpStatus,
+        retryAfterSeconds: diagnostics.retryAfterSeconds,
+      });
+      syncLog.error({ event: "sync.failed", durationMs, ...diagnostics }, "sync.failed");
       // KsefApiError's statusCode reflects KSeF's own response (e.g. 429 for
       // rate limiting); surface formatKsefError's friendlier message (with
       // retry-after info) for those instead of the SDK's raw message. Genuine
       // 5xx/unexpected errors still go through the generic error handler
       // below, which hides internal details.
       if (error instanceof KsefApiError && error.statusCode < 500) {
-        return reply.code(error.statusCode).send({ error: message });
+        return reply.code(error.statusCode).send({ error: diagnostics.message, syncRunId: run.id });
       }
-      throw error;
+      return reply.code(500).send({ error: "internal error", syncRunId: run.id });
     }
   });
 

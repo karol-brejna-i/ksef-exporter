@@ -4,6 +4,7 @@ import { loadConfig } from "../config/env.js";
 import { createDb } from "../db/client.js";
 import { KsefSessionManager } from "../ksef/client.js";
 import { buildServer } from "./server.js";
+import { startupContext } from "./startup-context.js";
 
 /**
  * Real entry point (not exercised by tests): wires up the actual config,
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
   });
 
   await fastify.listen({ port: config.PORT, host: "0.0.0.0" });
+  fastify.log.info(startupContext(config), "app.started");
 }
 
 main().catch((error) => {

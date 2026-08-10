@@ -99,6 +99,9 @@ export const syncState = sqliteTable("sync_state", {
 export const syncRuns = sqliteTable("sync_runs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   requestedAt: text("requested_at").notNull().default(sql`(current_timestamp)`),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+  durationMs: integer("duration_ms"),
   windowFrom: text("window_from").notNull(),
   windowTo: text("window_to").notNull(),
   /** "running" until the sync call resolves, then "success" or "error". */
@@ -109,4 +112,17 @@ export const syncRuns = sqliteTable("sync_runs", {
   invoiceCount: integer("invoice_count"),
   /** Set once `status` is "error". */
   errorMessage: text("error_message"),
+  continuationBefore: text("continuation_before"),
+  continuationAfter: text("continuation_after"),
+  fetchedCount: integer("fetched_count"),
+  insertedCount: integer("inserted_count"),
+  duplicateCount: integer("duplicate_count"),
+  categorizedCount: integer("categorized_count"),
+  needsReviewCount: integer("needs_review_count"),
+  hasMore: integer("has_more", { mode: "boolean" }),
+  maxIterations: integer("max_iterations"),
+  errorType: text("error_type"),
+  errorCode: text("error_code"),
+  httpStatus: integer("http_status"),
+  retryAfterSeconds: integer("retry_after_seconds"),
 });

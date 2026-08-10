@@ -10,7 +10,7 @@ afterEach(() => {
 
 describe("SyncButton", () => {
   it("defaults to the current month and triggers a sync on click", async () => {
-    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ invoiceCount: 5 });
+    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ syncRunId: 1, invoiceCount: 5 });
     const onSynced = vi.fn();
     const user = userEvent.setup();
 
@@ -27,7 +27,7 @@ describe("SyncButton", () => {
   });
 
   it("triggers a sync using a custom date range entered by the user", async () => {
-    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ invoiceCount: 2 });
+    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ syncRunId: 1, invoiceCount: 2 });
     const onSynced = vi.fn();
     const user = userEvent.setup();
 
@@ -45,7 +45,11 @@ describe("SyncButton", () => {
   });
 
   it("hints that more invoices are available and to import again when hasMore is true", async () => {
-    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ invoiceCount: 3, hasMore: true });
+    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({
+      syncRunId: 1,
+      invoiceCount: 3,
+      hasMore: true,
+    });
     const onSynced = vi.fn();
     const user = userEvent.setup();
 

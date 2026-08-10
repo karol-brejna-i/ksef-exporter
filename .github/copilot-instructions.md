@@ -4,7 +4,7 @@
 
 - Read `design/SPEC.md` for product requirements and KSeF mechanics.
 - Read `design/IMPLEMENTATION_PLAN.md` for phase status and the next work. Treat its "Current implementation status" section as authoritative; do not infer completion from scaffolding alone.
-- Read `design/IMPORT_OBSERVABILITY_PLAN.md` before changing import logging, diagnostics, or traceability. It is a separate tracked workstream and explicitly excludes quota-behavior changes until observability is in place.
+- Read `design/IMPORT_OBSERVABILITY_PLAN.md` before changing import logging, diagnostics, or traceability. Its implementation is complete and its boundary still excludes quota-behavior changes unless explicitly requested.
 - Read `README.md` for local setup and runtime commands.
 - Phases 0–7 are implemented. Phase 8 (manual entry) is next. Phase 9 is deferred and must not be started without an explicit request.
 
@@ -36,6 +36,7 @@
 - KSeF access is read-only. Never add invoice-issuing permissions or log KSeF tokens, JWTs, or other secrets.
 - `syncPurchaseInvoices` intentionally defaults to `maxIterations: 1`. Do not remove this limit casually: the export-init endpoint is capped at 16 requests/minute and 20/hour, and the SDK default of 20 caused a real production rate-limit incident.
 - A sync persists its continuation point and records a `sync_runs` audit row. Preserve import traceability on both success and failure.
+- Import lifecycle logs use stable `sync.*` events correlated by `syncRunId`; durable history stores timings, continuation movement, counts, and safe error metadata. Never log raw SDK response bodies or invoice XML.
 - KSeF invoices are deduplicated by KSeF number. Re-syncing must not overwrite a human-assigned category.
 - Categorization checks exact seller NIP before case-insensitive seller-name rules. Human corrections update/create the seller rule for future invoices.
 - Manual entries share the invoices table with `source = "manual"`. Phase 8 requires the user to choose a category directly, stores confidence as `matched`, and must not create a seller rule.

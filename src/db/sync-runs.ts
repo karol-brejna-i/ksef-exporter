@@ -7,11 +7,58 @@ export type SyncRunStatus = "running" | "success" | "error";
 export interface SyncRun {
   id: number;
   requestedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
   windowFrom: string;
   windowTo: string;
   status: SyncRunStatus;
   invoiceCount: number | null;
   errorMessage: string | null;
+  continuationBefore: string | null;
+  continuationAfter: string | null;
+  fetchedCount: number | null;
+  insertedCount: number | null;
+  duplicateCount: number | null;
+  categorizedCount: number | null;
+  needsReviewCount: number | null;
+  hasMore: boolean | null;
+  maxIterations: number | null;
+  errorType: string | null;
+  errorCode: string | null;
+  httpStatus: number | null;
+  retryAfterSeconds: number | null;
+}
+
+export interface CreateSyncRunInput {
+  windowFrom: string;
+  windowTo: string;
+  startedAt?: string;
+  continuationBefore?: string | null;
+  maxIterations?: number;
+}
+
+export interface SyncRunSuccessDiagnostics {
+  completedAt: string;
+  durationMs: number;
+  invoiceCount: number;
+  continuationAfter: string | null;
+  fetchedCount: number;
+  insertedCount: number;
+  duplicateCount: number;
+  categorizedCount: number;
+  needsReviewCount: number;
+  hasMore: boolean;
+}
+
+export interface SyncRunErrorDiagnostics {
+  completedAt: string;
+  durationMs: number;
+  errorMessage: string;
+  errorType: string;
+  errorCode?: string | null;
+  httpStatus?: number | null;
+  retryAfterSeconds?: number | null;
 }
 
 /**
@@ -19,13 +66,16 @@ export interface SyncRun {
  * the actual KSeF fetch happens -- so even a run that crashes or hangs
  * still shows up in the history as "running" rather than vanishing.
  */
-export async function createSyncRun(
-  db: Db,
-  window: { windowFrom: string; windowTo: string },
-): Promise<SyncRun> {
+export async function createSyncRun(db: Db, input: CreateSyncRunInput): Promise<SyncRun> {
   const [row] = await db
     .insert(syncRuns)
-    .values({ windowFrom: window.windowFrom, windowTo: window.windowTo })
+    .values({
+      windowFrom: input.windowFrom,
+      windowTo: input.windowTo,
+      startedAt: input.startedAt,
+      continuationBefore: input.continuationBefore,
+      maxIterations: input.maxIterations,
+    })
     .returning();
   if (!row) {
     throw new Error("Failed to create sync run: no row returned");
@@ -36,11 +86,19 @@ export async function createSyncRun(
 export async function markSyncRunSuccess(
   db: Db,
   id: number,
-  invoiceCount: number,
+  diagnostics: SyncRunSuccessDiagnostics,
 ): Promise<SyncRun> {
   const [row] = await db
     .update(syncRuns)
-    .set({ status: "success", invoiceCount, errorMessage: null })
+    .set({
+      status: "success",
+      ...diagnostics,
+      errorMessage: null,
+      errorType: null,
+      errorCode: null,
+      httpStatus: null,
+      retryAfterSeconds: null,
+    })
     .where(eq(syncRuns.id, id))
     .returning();
   if (!row) {
@@ -49,10 +107,14 @@ export async function markSyncRunSuccess(
   return row;
 }
 
-export async function markSyncRunError(db: Db, id: number, errorMessage: string): Promise<SyncRun> {
+export async function markSyncRunError(
+  db: Db,
+  id: number,
+  diagnostics: SyncRunErrorDiagnostics,
+): Promise<SyncRun> {
   const [row] = await db
     .update(syncRuns)
-    .set({ status: "error", errorMessage, invoiceCount: null })
+    .set({ status: "error", ...diagnostics, invoiceCount: null })
     .where(eq(syncRuns.id, id))
     .returning();
   if (!row) {

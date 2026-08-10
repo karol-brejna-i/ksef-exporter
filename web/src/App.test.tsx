@@ -86,7 +86,7 @@ describe("App", () => {
     vi.spyOn(apiClient, "fetchCategories").mockResolvedValue({ categories: [] });
     const fetchInvoices = vi.spyOn(apiClient, "fetchInvoices").mockResolvedValue({ invoices: [] });
     vi.spyOn(apiClient, "fetchSyncRuns").mockResolvedValue({ runs: [] });
-    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ invoiceCount: 1 });
+    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ syncRunId: 1, invoiceCount: 1 });
     const user = userEvent.setup();
 
     render(<App />);

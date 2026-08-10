@@ -15,6 +15,13 @@
       "when": 1783669304188,
       "tag": "0001_reflective_jane_foster",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786372002496,
+      "tag": "0002_aspiring_wendigo",
+      "breakpoints": true
     }
   ]
 }

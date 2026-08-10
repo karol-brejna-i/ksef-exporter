@@ -37,11 +37,27 @@ export type SyncRunStatus = "running" | "success" | "error";
 export interface SyncRun {
   id: number;
   requestedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
   windowFrom: string;
   windowTo: string;
   status: SyncRunStatus;
   invoiceCount: number | null;
   errorMessage: string | null;
+  continuationBefore: string | null;
+  continuationAfter: string | null;
+  fetchedCount: number | null;
+  insertedCount: number | null;
+  duplicateCount: number | null;
+  categorizedCount: number | null;
+  needsReviewCount: number | null;
+  hasMore: boolean | null;
+  maxIterations: number | null;
+  errorType: string | null;
+  errorCode: string | null;
+  httpStatus: number | null;
+  retryAfterSeconds: number | null;
 }
 
 /**
@@ -85,7 +101,7 @@ export function triggerSync(
   token: string,
   windowFrom: string,
   windowTo: string,
-): Promise<{ invoiceCount: number; hasMore?: boolean }> {
+): Promise<{ syncRunId: number; invoiceCount: number; hasMore?: boolean }> {
   return request(
     "/sync",
     { method: "POST", body: JSON.stringify({ windowFrom, windowTo }) },

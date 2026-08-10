@@ -2,6 +2,7 @@ import type { ContinuationPoints, KsefClient } from "ksef-client";
 import { categorize } from "./categorization/engine.js";
 import type { Db } from "./db/client.js";
 import {
+  getInvoiceByKsefNumber,
   type InvoiceRow,
   insertKsefInvoiceIfNotExists,
   updateInvoiceCategory,
@@ -31,6 +32,7 @@ export interface SyncPurchaseInvoicesOptions {
 
 export interface SyncPurchaseInvoicesResult {
   invoices: InvoiceRow[];
+  diagnostics: SyncDiagnostics;
   /**
    * Heuristic: true when the new continuation point (KSeF's high-water mark)
    * hasn't reached `windowTo` yet, meaning more invoices are likely still
@@ -41,6 +43,17 @@ export interface SyncPurchaseInvoicesResult {
    * point), but can occasionally under/over-report right at a day boundary.
    */
   hasMore: boolean;
+}
+
+export interface SyncDiagnostics {
+  continuationBefore: string | null;
+  continuationAfter: string | null;
+  fetchedCount: number;
+  insertedCount: number;
+  duplicateCount: number;
+  categorizedCount: number;
+  needsReviewCount: number;
+  maxIterations: number;
 }
 
 /**
@@ -60,6 +73,8 @@ export interface SyncPurchaseInvoicesDeps {
   fetchInvoices?: typeof fetchPurchaseInvoices;
   /** Injectable for tests; defaults to a no-op logger. */
   logger?: SyncLogger;
+  /** Injectable monotonic-enough clock for stage-duration tests. */
+  now?: () => number;
 }
 
 /**
@@ -79,30 +94,47 @@ export async function syncPurchaseInvoices(
 ): Promise<SyncPurchaseInvoicesResult> {
   const fetchInvoices = deps.fetchInvoices ?? fetchPurchaseInvoices;
   const logger = deps.logger ?? noopLogger;
+  const now = deps.now ?? Date.now;
+  const maxIterations = options.maxIterations ?? 1;
 
   const storedContinuationPoint = await getContinuationPoint(db, SUBJECT_TYPE);
   const continuationPoints: ContinuationPoints =
     storedContinuationPoint != null ? { [SUBJECT_TYPE]: storedContinuationPoint } : {};
 
-  logger.info("sync: requesting export from KSeF", {
+  logger.info("sync.fetch.started", {
     windowFrom: options.windowFrom,
     windowTo: options.windowTo,
-    resumingFrom: storedContinuationPoint ?? null,
+    continuationBefore: storedContinuationPoint ?? null,
+    maxIterations,
   });
+  const fetchStartedAt = now();
   const fetchResult = await fetchInvoices(client, {
     windowFrom: options.windowFrom,
     windowTo: options.windowTo,
     continuationPoints,
-    maxIterations: options.maxIterations ?? 1,
+    maxIterations,
   });
-  logger.info("sync: received invoices from KSeF, persisting", {
-    count: fetchResult.invoices.length,
+  logger.info("sync.fetch.completed", {
+    durationMs: now() - fetchStartedAt,
+    fetchedCount: fetchResult.invoices.length,
+    referenceCount: fetchResult.referenceNumbers.length,
   });
 
+  logger.info("sync.persist.started", { fetchedCount: fetchResult.invoices.length });
+  const persistStartedAt = now();
   const rules = await listRules(db);
   const invoices: InvoiceRow[] = [];
+  let insertedCount = 0;
+  let duplicateCount = 0;
+  let categorizedCount = 0;
   for (const invoice of fetchResult.invoices) {
+    const existing = await getInvoiceByKsefNumber(db, invoice.ksefNumber);
     const row = await insertKsefInvoiceIfNotExists(db, invoice);
+    if (existing) {
+      duplicateCount++;
+    } else {
+      insertedCount++;
+    }
 
     const isUncategorized =
       row.categoryId === null && row.categorizationConfidence === "needs_review";
@@ -116,17 +148,31 @@ export async function syncPurchaseInvoices(
       invoices.push(row);
       continue;
     }
+    categorizedCount++;
     invoices.push(await updateInvoiceCategory(db, row.id, result.categoryId, result.confidence));
   }
 
   const newContinuationPoint = fetchResult.continuationPoints[SUBJECT_TYPE];
   await setContinuationPoint(db, SUBJECT_TYPE, newContinuationPoint ?? null);
   const hasMore = newContinuationPoint !== undefined && newContinuationPoint < options.windowTo;
-  logger.info("sync: complete", {
-    persistedCount: invoices.length,
-    newContinuationPoint: newContinuationPoint ?? null,
+  const needsReviewCount = invoices.filter(
+    (invoice) => invoice.categorizationConfidence === "needs_review",
+  ).length;
+  const diagnostics: SyncDiagnostics = {
+    continuationBefore: storedContinuationPoint ?? null,
+    continuationAfter: newContinuationPoint ?? null,
+    fetchedCount: fetchResult.invoices.length,
+    insertedCount,
+    duplicateCount,
+    categorizedCount,
+    needsReviewCount,
+    maxIterations,
+  };
+  logger.info("sync.persist.completed", {
+    durationMs: now() - persistStartedAt,
+    ...diagnostics,
     hasMore,
   });
 
-  return { invoices, hasMore };
+  return { invoices, hasMore, diagnostics };
 }

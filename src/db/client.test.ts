@@ -1,6 +1,9 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDb } from "./client.js";
@@ -77,6 +80,47 @@ describe("createDb", () => {
       const { sqlite } = createDb(dbPath);
       try {
         expect(sqlite.pragma("journal_mode", { simple: true })).toBe("wal");
+      } finally {
+        sqlite.close();
+      }
+    });
+
+    it("preserves existing sync runs when applying the observability migration", () => {
+      const base = mkdtempSync(join(tmpdir(), "ksef-exporter-db-test-"));
+      tempDir = base;
+      const dbPath = join(base, "legacy.sqlite");
+      const migrationsDir = fileURLToPath(new URL("../../drizzle/migrations", import.meta.url));
+      const journal = JSON.parse(
+        readFileSync(join(migrationsDir, "meta", "_journal.json"), "utf8"),
+      ) as { entries: Array<{ tag: string; when: number }> };
+      const legacy = new Database(dbPath);
+      legacy.exec(
+        'CREATE TABLE "__drizzle_migrations" (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)',
+      );
+      for (const entry of journal.entries.slice(0, 2)) {
+        const migration = readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8");
+        for (const statement of migration.split("--> statement-breakpoint")) {
+          if (statement.trim()) legacy.exec(statement);
+        }
+        legacy
+          .prepare('INSERT INTO "__drizzle_migrations" (hash, created_at) VALUES (?, ?)')
+          .run(createHash("sha256").update(migration).digest("hex"), entry.when);
+      }
+      legacy
+        .prepare(
+          "INSERT INTO sync_runs (window_from, window_to, status, invoice_count) VALUES (?, ?, 'success', ?)",
+        )
+        .run("2025-01-01", "2025-01-31", 4);
+      legacy.close();
+
+      const { sqlite } = createDb(dbPath);
+      try {
+        expect(sqlite.prepare("SELECT count(*) AS count FROM sync_runs").get()).toEqual({
+          count: 1,
+        });
+        expect(sqlite.pragma("table_info(sync_runs)")).toEqual(
+          expect.arrayContaining([expect.objectContaining({ name: "retry_after_seconds" })]),
+        );
       } finally {
         sqlite.close();
       }

@@ -1,3 +1,4 @@
+import { PassThrough } from "node:stream";
 import type { FastifyInstance } from "fastify";
 import { KsefRateLimitError } from "ksef-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,7 +6,7 @@ import { createCategory } from "../db/categories.js";
 import type { Db } from "../db/client.js";
 import { createDb } from "../db/client.js";
 import { insertKsefInvoiceIfNotExists, updateInvoiceCategory } from "../db/invoices.js";
-import type { SyncPurchaseInvoicesResult } from "../sync.js";
+import type { SyncPurchaseInvoicesResult, syncPurchaseInvoices } from "../sync.js";
 import { buildServer } from "./server.js";
 
 const config = {
@@ -31,6 +32,17 @@ const SAMPLE_INVOICE = {
   rawXml: "<Faktura></Faktura>",
 };
 
+const EMPTY_DIAGNOSTICS: SyncPurchaseInvoicesResult["diagnostics"] = {
+  continuationBefore: null,
+  continuationAfter: "2025-01-31",
+  fetchedCount: 0,
+  insertedCount: 0,
+  duplicateCount: 0,
+  categorizedCount: 0,
+  needsReviewCount: 0,
+  maxIterations: 1,
+};
+
 describe("API server", () => {
   let db: Db;
   let close: () => void;
@@ -46,7 +58,11 @@ describe("API server", () => {
     // called with never needs to satisfy the real KsefClient shape.
     getClient = vi.fn(async () => ({ workflows: {} }) as never);
     sync = vi.fn(
-      async (): Promise<SyncPurchaseInvoicesResult> => ({ invoices: [], hasMore: false }),
+      async (): Promise<SyncPurchaseInvoicesResult> => ({
+        invoices: [],
+        hasMore: false,
+        diagnostics: EMPTY_DIAGNOSTICS,
+      }),
     );
     fastify = buildServer({ db, config, getClient, sync });
   });
@@ -195,10 +211,77 @@ describe("API server", () => {
   });
 
   describe("POST /sync", () => {
+    it("writes correlated structured lifecycle events", async () => {
+      const logStream = new PassThrough();
+      let output = "";
+      logStream.on("data", (chunk) => {
+        output += chunk.toString();
+      });
+      const observableSync = vi.fn(async (...args: Parameters<typeof syncPurchaseInvoices>) => {
+        args[3]?.logger?.info("sync.fetch.started", { maxIterations: 1 });
+        args[3]?.logger?.info("sync.fetch.completed", { fetchedCount: 0 });
+        args[3]?.logger?.info("sync.persist.started", { fetchedCount: 0 });
+        args[3]?.logger?.info("sync.persist.completed", { insertedCount: 0 });
+        return { invoices: [], hasMore: false, diagnostics: EMPTY_DIAGNOSTICS };
+      });
+      const observableServer = buildServer({
+        db,
+        config: { ...config, LOG_LEVEL: "info" },
+        getClient,
+        sync: observableSync,
+        logStream,
+      });
+      const loginResponse = await observableServer.inject({
+        method: "POST",
+        url: "/auth/login",
+        payload: { username: "owner", password: "a-strong-password" },
+      });
+      const token = (loginResponse.json() as { token: string }).token;
+
+      await observableServer.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      });
+      observableSync.mockRejectedValueOnce(new Error("safe failure"));
+      await observableServer.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-02-01", windowTo: "2025-02-28" },
+      });
+
+      const lifecycle = output
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { event?: string; syncRunId?: number })
+        .filter((entry) => entry.event?.startsWith("sync."));
+      expect(lifecycle.slice(0, 8).map((entry) => entry.event)).toEqual([
+        "sync.started",
+        "sync.client.started",
+        "sync.client.completed",
+        "sync.fetch.started",
+        "sync.fetch.completed",
+        "sync.persist.started",
+        "sync.persist.completed",
+        "sync.completed",
+      ]);
+      expect(new Set(lifecycle.slice(0, 8).map((entry) => entry.syncRunId))).toEqual(new Set([1]));
+      expect(lifecycle.slice(8).map((entry) => entry.event)).toEqual([
+        "sync.started",
+        "sync.client.started",
+        "sync.client.completed",
+        "sync.failed",
+      ]);
+      expect(new Set(lifecycle.slice(8).map((entry) => entry.syncRunId))).toEqual(new Set([2]));
+    });
+
     it("invokes the injected sync function and returns the invoice count", async () => {
       sync.mockResolvedValueOnce({
         invoices: [{ id: 1 }, { id: 2 }],
         hasMore: false,
+        diagnostics: { ...EMPTY_DIAGNOSTICS, fetchedCount: 2, insertedCount: 2 },
       } as unknown as SyncPurchaseInvoicesResult);
       const token = await login();
 
@@ -210,7 +293,7 @@ describe("API server", () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({ invoiceCount: 2, hasMore: false });
+      expect(response.json()).toEqual({ syncRunId: 1, invoiceCount: 2, hasMore: false });
       expect(sync).toHaveBeenCalledWith(
         db,
         { workflows: {} },
@@ -226,6 +309,7 @@ describe("API server", () => {
       sync.mockResolvedValueOnce({
         invoices: [{ id: 1 }],
         hasMore: true,
+        diagnostics: { ...EMPTY_DIAGNOSTICS, fetchedCount: 1, insertedCount: 1 },
       } as unknown as SyncPurchaseInvoicesResult);
       const token = await login();
 
@@ -236,7 +320,7 @@ describe("API server", () => {
         payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
       });
 
-      expect(response.json()).toEqual({ invoiceCount: 1, hasMore: true });
+      expect(response.json()).toEqual({ syncRunId: 1, invoiceCount: 1, hasMore: true });
     });
 
     it("rejects a request missing windowFrom/windowTo with 400", async () => {
@@ -256,6 +340,13 @@ describe("API server", () => {
     it("records a successful sync run", async () => {
       sync.mockResolvedValueOnce({
         invoices: [{ id: 1 }],
+        hasMore: false,
+        diagnostics: {
+          ...EMPTY_DIAGNOSTICS,
+          fetchedCount: 1,
+          insertedCount: 1,
+          categorizedCount: 1,
+        },
       } as unknown as SyncPurchaseInvoicesResult);
       const token = await login();
 
@@ -278,6 +369,12 @@ describe("API server", () => {
         windowTo: "2025-01-31",
         status: "success",
         invoiceCount: 1,
+        fetchedCount: 1,
+        insertedCount: 1,
+        duplicateCount: 0,
+        categorizedCount: 1,
+        continuationAfter: "2025-01-31",
+        maxIterations: 1,
       });
     });
 
@@ -303,6 +400,7 @@ describe("API server", () => {
       expect(body.runs[0]).toMatchObject({
         status: "error",
         errorMessage: "rate limited, retry after 52m",
+        errorType: "Error",
       });
     });
 
@@ -329,6 +427,11 @@ describe("API server", () => {
       });
       const body = runsResponse.json() as { runs: Array<Record<string, unknown>> };
       expect(body.runs[0]?.errorMessage).toMatch(/retry after 3m00s/i);
+      expect(body.runs[0]).toMatchObject({
+        errorType: "KsefRateLimitError",
+        httpStatus: 429,
+        retryAfterSeconds: 180,
+      });
     });
   });
 

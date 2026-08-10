@@ -1,6 +1,6 @@
 # KSeF Exporter
 
-**Last updated:** 2026-08-10 15:53
+**Last updated:** 2026-08-10 16:33
 
 Self-hosted app that pulls purchase invoices from KSeF, categorizes them, and supports manual
 correction. See [`design/SPEC.md`](./design/SPEC.md) for the business context and
@@ -81,6 +81,25 @@ first. Log in with the `AUTH_USERNAME`/`AUTH_PASSWORD` from your `.env`.
 The JWT is kept in memory only (not `localStorage`/`sessionStorage`), so refreshing the page
 requires logging in again — this is intentional, to limit exposure if the page is ever
 compromised by XSS.
+
+## Import diagnostics
+
+Every import receives a durable numeric `syncRunId`. The API returns it from `POST /sync`, and
+all structured lifecycle logs for that import include the same field. Events are named
+`sync.started`, `sync.client.*`, `sync.fetch.*`, `sync.persist.*`, and either `sync.completed` or
+`sync.failed`.
+
+Filter retained JSON logs with a tool such as `jq`:
+
+```sh
+jq 'select(.syncRunId == 42)' api.log
+```
+
+The Import screen's **Recent imports** table keeps durable diagnostics even when stdout logs are
+not retained. Expand **Details** to see timestamps, duration, continuation movement, fetched and
+inserted counts, duplicates, categorization counts, and safe error/retry metadata. Console logs
+still require external retention in production (for example, systemd journal or container logs).
+Neither logs nor durable diagnostics include tokens, raw SDK response bodies, or invoice XML.
 
 ## Building for production
 

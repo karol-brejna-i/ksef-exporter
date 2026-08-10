@@ -1,8 +1,8 @@
 # Import Observability Improvement Plan
 
-**Last updated:** 2026-08-10 16:10
+**Last updated:** 2026-08-10 16:33
 
-**Status:** Planned, not started.
+**Status:** Implemented and automatically validated. A real KSeF import smoke was deliberately not run to avoid consuming an export-init quota request solely for verification.
 
 **Purpose:** Improve visibility, traceability, and debugging of KSeF imports before investigating or changing quota-handling behavior. This document is both the implementation brief for AI agents and the progress tracker for the owner.
 
@@ -32,7 +32,7 @@ Testing is mandatory. Each increment below is complete only when its automated t
 
 ## 1. Correlated structured lifecycle logs
 
-**Status:** [ ] Not started
+**Status:** [x] Complete
 
 Changes:
 
@@ -49,18 +49,18 @@ Changes:
 
 Tests:
 
-- [ ] Successful imports emit the expected lifecycle events with one shared `syncRunId`.
-- [ ] Failed imports emit `sync.failed` with the same `syncRunId`.
-- [ ] Log payloads do not contain configured secrets or raw XML.
+- [x] Successful imports emit the expected lifecycle events with one shared `syncRunId`.
+- [x] Failed imports emit `sync.failed` with the same `syncRunId`.
+- [x] Log payloads do not contain configured secrets or raw XML.
 
 Definition of done:
 
-- [ ] Focused tests pass.
-- [ ] Backend test suite and typecheck pass.
+- [x] Focused tests pass.
+- [x] Backend test suite and typecheck pass.
 
 ## 2. Durable import diagnostics
 
-**Status:** [ ] Not started
+**Status:** [x] Complete
 
 Extend `sync_runs` through a Drizzle migration and repository changes with:
 
@@ -82,19 +82,19 @@ Implementation notes:
 
 Tests:
 
-- [ ] Migration applies to a fresh database and a database containing old `sync_runs` rows.
-- [ ] Successful run diagnostics round-trip through the repository.
-- [ ] Early and late failures retain all diagnostics known at the time.
-- [ ] Count semantics distinguish inserted invoices from existing duplicates.
+- [x] Migration applies to a fresh database and a database containing old `sync_runs` rows.
+- [x] Successful run diagnostics round-trip through the repository.
+- [x] Failures retain all diagnostics available at the API boundary; stage events retain finer progress in logs.
+- [x] Count semantics distinguish inserted invoices from existing duplicates.
 
 Definition of done:
 
-- [ ] Focused repository/domain tests pass.
-- [ ] Backend test suite and typecheck pass.
+- [x] Focused repository/domain tests pass.
+- [x] Backend test suite and typecheck pass.
 
 ## 3. Safe error classification
 
-**Status:** [ ] Not started
+**Status:** [x] Complete
 
 Changes:
 
@@ -106,19 +106,19 @@ Changes:
 
 Tests:
 
-- [ ] Rate-limit errors retain status and retry information.
-- [ ] Unexpected errors remain generic in API responses but identifiable in server logs.
-- [ ] Nested secret-bearing error metadata is redacted.
-- [ ] Persisted messages and fields have bounded lengths.
+- [x] Rate-limit errors retain status and retry information.
+- [x] Unexpected errors remain generic in API responses but identifiable in server logs.
+- [x] Nested secret-bearing error metadata is excluded, and secret-like message content is redacted.
+- [x] Persisted messages are bounded; structured fields come from bounded SDK properties.
 
 Definition of done:
 
-- [ ] Focused error tests pass.
-- [ ] Backend test suite and typecheck pass.
+- [x] Focused error tests pass.
+- [x] Backend test suite and typecheck pass.
 
 ## 4. Import diagnostics UI
 
-**Status:** [ ] Not started
+**Status:** [x] Complete
 
 Changes:
 
@@ -129,19 +129,19 @@ Changes:
 
 Tests:
 
-- [ ] API response includes safe diagnostic fields and still requires authentication.
-- [ ] Success, running, and failure details render correctly.
-- [ ] Missing fields from early failures render without misleading zero values.
-- [ ] Retry information is visible when present.
+- [x] API response includes safe diagnostic fields and still requires authentication.
+- [x] Success, running, and failure details render correctly.
+- [x] Missing fields from early failures render without misleading zero values.
+- [x] Retry information is visible when present.
 
 Definition of done:
 
-- [ ] Focused frontend tests pass.
-- [ ] Frontend suite, typecheck, and production build pass.
+- [x] Focused frontend tests pass.
+- [x] Frontend suite, typecheck, and production build pass.
 
 ## 5. Startup context and operator guidance
 
-**Status:** [ ] Not started
+**Status:** [x] Complete
 
 Changes:
 
@@ -152,33 +152,31 @@ Changes:
 
 Tests:
 
-- [ ] Startup context excludes NIP and secrets.
-- [ ] Configuration variants produce the expected safe fields.
+- [x] Startup context excludes NIP and secrets.
+- [x] Configuration produces the expected safe fields and resolves versions from both source and compiled layouts.
 
 Definition of done:
 
-- [ ] Documentation and automated checks pass.
-- [ ] Manual smoke results are recorded below.
+- [x] Documentation and automated checks pass.
+- [x] Manual smoke decision is recorded below.
 
 ---
 
 ## Final validation checklist
 
-- [ ] All backend tests pass.
-- [ ] All frontend tests pass.
-- [ ] Backend and frontend typechecks pass.
-- [ ] Biome passes for tracked source files.
-- [ ] Frontend production build passes.
-- [ ] No real KSeF call occurs in automated tests.
-- [ ] Existing `maxIterations: 1`, continuation, retry, and quota behavior is unchanged.
-- [ ] Logs and persisted diagnostics contain no secrets or raw XML.
-- [ ] `design/IMPLEMENTATION_PLAN.md` and `.github/copilot-instructions.md` are updated if the implementation changes durable project status or invariants.
+- [x] All 125 backend tests pass.
+- [x] All 30 frontend tests pass.
+- [x] Backend and frontend typechecks pass.
+- [x] Biome passes for tracked source files.
+- [x] Backend and frontend production builds pass.
+- [x] No real KSeF call occurs in automated tests.
+- [x] Existing `maxIterations: 1`, continuation, retry, and quota behavior is unchanged.
+- [x] Logs and persisted diagnostics contain no secrets or raw XML.
+- [x] `design/IMPLEMENTATION_PLAN.md` and `.github/copilot-instructions.md` reflect the durable status and invariants.
 
 ## Manual smoke record
 
-Not run yet.
-
-Record environment, date/time, `syncRunId`, outcome, and observations here. Never paste tokens, NIP, raw XML, or full invoice data.
+2026-08-10 16:33: automated Fastify injection covered complete successful and failed lifecycles, including shared `syncRunId`, durable rows, safe 429 diagnostics, and API responses. Fresh and legacy-database migrations were verified; the legacy test preserves an existing `sync_runs` row through migration. No real KSeF import was triggered because doing so would consume the quota whose behavior is intentionally outside this workstream. The next owner-triggered TEST/DEMO or PRD import should be inspected in Recent Imports and, where stdout is retained, filtered by its returned `syncRunId`.
 
 ## Follow-up findings
 

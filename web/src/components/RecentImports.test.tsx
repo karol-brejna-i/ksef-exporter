@@ -30,20 +30,77 @@ describe("RecentImports", () => {
         {
           id: 1,
           requestedAt: "2025-01-16T10:00:00.000Z",
+          startedAt: "2025-01-16T10:00:00.000Z",
+          completedAt: "2025-01-16T10:00:02.500Z",
+          durationMs: 2500,
           windowFrom: "2025-01-01",
           windowTo: "2025-01-31",
           status: "success",
           invoiceCount: 5,
           errorMessage: null,
+          continuationBefore: null,
+          continuationAfter: "2025-01-31T00:00:00.000Z",
+          fetchedCount: 5,
+          insertedCount: 4,
+          duplicateCount: 1,
+          categorizedCount: 3,
+          needsReviewCount: 2,
+          hasMore: false,
+          maxIterations: 1,
+          errorType: null,
+          errorCode: null,
+          httpStatus: null,
+          retryAfterSeconds: null,
         },
         {
           id: 2,
           requestedAt: "2025-02-16T10:00:00.000Z",
+          startedAt: "2025-02-16T10:00:00.000Z",
+          completedAt: "2025-02-16T10:00:01.000Z",
+          durationMs: 1000,
           windowFrom: "2025-02-01",
           windowTo: "2025-02-28",
           status: "error",
           invoiceCount: null,
           errorMessage: "rate limited, retry after 52m",
+          continuationBefore: "2025-01-31T00:00:00.000Z",
+          continuationAfter: null,
+          fetchedCount: null,
+          insertedCount: null,
+          duplicateCount: null,
+          categorizedCount: null,
+          needsReviewCount: null,
+          hasMore: null,
+          maxIterations: 1,
+          errorType: "KsefRateLimitError",
+          errorCode: "21159",
+          httpStatus: 429,
+          retryAfterSeconds: 3120,
+        },
+        {
+          id: 3,
+          requestedAt: "2025-03-16T10:00:00.000Z",
+          startedAt: "2025-03-16T10:00:00.000Z",
+          completedAt: null,
+          durationMs: null,
+          windowFrom: "2025-03-01",
+          windowTo: "2025-03-31",
+          status: "running",
+          invoiceCount: null,
+          errorMessage: null,
+          continuationBefore: null,
+          continuationAfter: null,
+          fetchedCount: null,
+          insertedCount: null,
+          duplicateCount: null,
+          categorizedCount: null,
+          needsReviewCount: null,
+          hasMore: null,
+          maxIterations: 1,
+          errorType: null,
+          errorCode: null,
+          httpStatus: null,
+          retryAfterSeconds: null,
         },
       ],
     });
@@ -52,6 +109,12 @@ describe("RecentImports", () => {
 
     expect(await screen.findByText("5 invoice(s)")).toBeInTheDocument();
     expect(screen.getByText("Failed: rate limited, retry after 52m")).toBeInTheDocument();
+    expect(screen.getByText("2.5s")).toBeInTheDocument();
+    expect(screen.getByText("KsefRateLimitError")).toBeInTheDocument();
+    expect(screen.getByText("21159")).toBeInTheDocument();
+    expect(screen.getByText("3120 seconds")).toBeInTheDocument();
+    expect(screen.getByText("In progress…")).toBeInTheDocument();
+    expect(screen.getAllByText("Not completed")).toHaveLength(2);
   });
 
   it("shows an error message when the history fails to load", async () => {

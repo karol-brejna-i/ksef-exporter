@@ -49,6 +49,14 @@ describe("syncPurchaseInvoices", () => {
     expect(result.invoices).toHaveLength(1);
     expect(result.invoices[0]?.categorizationConfidence).toBe("matched");
     expect(result.invoices[0]?.categoryId).not.toBeNull();
+    expect(result.diagnostics).toMatchObject({
+      fetchedCount: 1,
+      insertedCount: 1,
+      duplicateCount: 0,
+      categorizedCount: 1,
+      needsReviewCount: 0,
+      maxIterations: 1,
+    });
 
     sqlite.close();
   });
@@ -112,6 +120,7 @@ describe("syncPurchaseInvoices", () => {
     );
 
     expect(result.invoices[0]?.categoryId).toBe(humanCategoryId);
+    expect(result.diagnostics).toMatchObject({ insertedCount: 0, duplicateCount: 1 });
 
     sqlite.close();
   });
@@ -189,12 +198,16 @@ describe("syncPurchaseInvoices", () => {
       { fetchInvoices, logger: { info } },
     );
 
-    expect(info).toHaveBeenCalledWith("sync: requesting export from KSeF", expect.any(Object));
+    expect(info).toHaveBeenCalledWith("sync.fetch.started", expect.any(Object));
     expect(info).toHaveBeenCalledWith(
-      "sync: received invoices from KSeF, persisting",
-      expect.objectContaining({ count: 1 }),
+      "sync.fetch.completed",
+      expect.objectContaining({ fetchedCount: 1 }),
     );
-    expect(info).toHaveBeenCalledWith("sync: complete", expect.any(Object));
+    expect(info).toHaveBeenCalledWith("sync.persist.started", { fetchedCount: 1 });
+    expect(info).toHaveBeenCalledWith(
+      "sync.persist.completed",
+      expect.objectContaining({ insertedCount: 1, categorizedCount: 1 }),
+    );
 
     sqlite.close();
   });
