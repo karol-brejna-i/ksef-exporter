@@ -47,3 +47,12 @@ export function startupContext(
     logLevel: config.LOG_LEVEL,
   };
 }
+
+export function proxyConfigurationWarning(env: NodeJS.ProcessEnv): string | null {
+  const hasLowercaseProxy = Boolean(env.https_proxy || env.http_proxy);
+  const hasSupportedProxy = Boolean(env.HTTPS_PROXY || env.HTTP_PROXY);
+
+  if (!hasLowercaseProxy || hasSupportedProxy) return null;
+
+  return "Lowercase https_proxy/http_proxy is set, but ksef-client reads only uppercase HTTPS_PROXY/HTTP_PROXY; KSeF connections may time out";
+}

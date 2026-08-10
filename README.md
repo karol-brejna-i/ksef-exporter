@@ -1,6 +1,6 @@
 # KSeF Exporter
 
-**Last updated:** 2026-08-10 16:33
+**Last updated:** 2026-08-10 17:21
 
 Self-hosted app that pulls purchase invoices from KSeF, categorizes them, and supports manual
 correction. See [`design/SPEC.md`](./design/SPEC.md) for the business context and
@@ -46,6 +46,11 @@ cp .env.example .env
 | `JWT_SECRET`       | yes                                        | Random string, 32+ chars, used to sign session JWTs. Generate with `openssl rand -base64 32`. Secret.                                     |
 | `PORT`             | no (default `3000`)                        | Port the API listens on.                                                                                                                  |
 | `WEB_ORIGIN`       | no (default `http://localhost:5173`)       | Origin the frontend is served from; allow-listed for CORS.                                                                                |
+
+If outbound traffic requires a proxy, set the standard uppercase `HTTPS_PROXY` (preferred for
+KSeF HTTPS traffic) or `HTTP_PROXY` variable. `ksef-client` also honors uppercase `NO_PROXY`.
+The pinned SDK does not read lowercase `https_proxy`, `http_proxy`, or `no_proxy`; the API logs a
+startup warning when it detects a lowercase-only proxy configuration.
 
 ## 3. Run the API
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { installedVersions, startupContext } from "./startup-context.js";
+import { installedVersions, proxyConfigurationWarning, startupContext } from "./startup-context.js";
 
 describe("startupContext", () => {
   it("finds the installed application and SDK versions", () => {
@@ -25,5 +25,26 @@ describe("startupContext", () => {
       logLevel: "info",
     });
     expect(JSON.stringify(context)).not.toMatch(/token|password|nip|jwt/i);
+  });
+});
+
+describe("proxyConfigurationWarning", () => {
+  it("warns when only lowercase proxy variables are configured", () => {
+    expect(proxyConfigurationWarning({ https_proxy: "http://proxy:912" })).toMatch(
+      /uppercase HTTPS_PROXY\/HTTP_PROXY/,
+    );
+  });
+
+  it("does not warn when a supported uppercase proxy variable is configured", () => {
+    expect(
+      proxyConfigurationWarning({
+        https_proxy: "http://proxy:912",
+        HTTPS_PROXY: "http://proxy:912",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not warn when no proxy variables are configured", () => {
+    expect(proxyConfigurationWarning({})).toBeNull();
   });
 });

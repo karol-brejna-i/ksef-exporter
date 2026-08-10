@@ -4,7 +4,7 @@ import { loadConfig } from "../config/env.js";
 import { createDb } from "../db/client.js";
 import { KsefSessionManager } from "../ksef/client.js";
 import { buildServer } from "./server.js";
-import { startupContext } from "./startup-context.js";
+import { proxyConfigurationWarning, startupContext } from "./startup-context.js";
 
 /**
  * Real entry point (not exercised by tests): wires up the actual config,
@@ -13,6 +13,8 @@ import { startupContext } from "./startup-context.js";
  */
 async function main(): Promise<void> {
   const config = loadConfig();
+  const proxyWarning = proxyConfigurationWarning(process.env);
+  if (proxyWarning) console.warn(proxyWarning);
   const { db } = createDb(config.DATABASE_PATH);
   const sessionManager = new KsefSessionManager(config);
 
