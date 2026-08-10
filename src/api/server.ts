@@ -7,7 +7,7 @@ import Fastify, {
   type FastifyReply,
   type FastifyRequest,
 } from "fastify";
-import { KsefApiError, type KsefClient } from "ksef-client";
+import { KsefApiError, type KsefClient, KsefValidationError } from "ksef-client";
 import { z } from "zod";
 import { correctInvoiceCategory, InvoiceNotFoundError } from "../categorization/correct.js";
 import type { AppConfig } from "../config/env.js";
@@ -68,6 +68,12 @@ const invoiceQuerySchema = z.object({
 const invoiceIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
+
+/** Stage-scoped events are named `sync.<stage>.<phase>`; `sync.started`/`sync.completed` aren't. */
+function stageOfEvent(event: string): string | null {
+  const parts = event.split(".");
+  return parts.length === 3 ? (parts[1] ?? null) : null;
+}
 
 const categoryCorrectionBodySchema = z.object({
   categoryId: z.number().int().positive(),
@@ -139,8 +145,13 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       maxIterations: 1,
     });
     const syncLog = request.log.child({ syncRunId: run.id });
-    const info = (event: string, meta: Record<string, unknown> = {}) =>
+    let stage = "start";
+    const info = (event: string, meta: Record<string, unknown> = {}) => {
+      stage = stageOfEvent(event) ?? stage;
       syncLog.info({ event, ...meta }, event);
+    };
+    const warn = (event: string, meta: Record<string, unknown> = {}) =>
+      syncLog.warn({ event, ...meta }, event);
     info("sync.started", { ...parsed.data, continuationBefore: continuationBefore ?? null });
     try {
       const clientStartedAt = now();
@@ -148,7 +159,7 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       const client = await deps.getClient();
       info("sync.client.completed", { durationMs: now() - clientStartedAt });
       const result = await sync(deps.db, client, parsed.data, {
-        logger: { info },
+        logger: { info, warn },
       });
       const completedAtMs = now();
       const durationMs = completedAtMs - startedAtMs;
@@ -188,7 +199,13 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
         httpStatus: diagnostics.httpStatus,
         retryAfterSeconds: diagnostics.retryAfterSeconds,
       });
-      syncLog.error({ event: "sync.failed", durationMs, ...diagnostics }, "sync.failed");
+      syncLog.error({ event: "sync.failed", stage, durationMs, ...diagnostics }, "sync.failed");
+      // The SDK rejects an impossible query (e.g. a window ending before the
+      // stored continuation point) before sending anything, which is a bad
+      // request, not an internal failure.
+      if (error instanceof KsefValidationError) {
+        return reply.code(400).send({ error: diagnostics.message, syncRunId: run.id });
+      }
       // KsefApiError's statusCode reflects KSeF's own response (e.g. 429 for
       // rate limiting); surface formatKsefError's friendlier message (with
       // retry-after info) for those instead of the SDK's raw message. Genuine

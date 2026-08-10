@@ -180,6 +180,101 @@ describe("syncPurchaseInvoices", () => {
     sqlite.close();
   });
 
+  it("ignores a continuation point that is later than windowTo so a backfill can run", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    let capturedContinuationPoints: unknown;
+    const fetchInvoices = (async (
+      _client: unknown,
+      opts: { continuationPoints: unknown },
+    ): Promise<FetchPurchaseInvoicesResult> => {
+      capturedContinuationPoints = opts.continuationPoints;
+      return {
+        invoices: [],
+        continuationPoints: { Subject2: "2026-07-31T00:00:00+00:00" },
+        referenceNumbers: [],
+      };
+    }) as unknown as typeof import("./ksef/invoices.js").fetchPurchaseInvoices;
+    const warn = vi.fn();
+
+    await setContinuationPoint(db, "Subject2", "2026-08-10T15:32:59.989017+00:00");
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-07-01", windowTo: "2026-07-31" },
+      { fetchInvoices, logger: { info: vi.fn(), warn } },
+    );
+
+    expect(capturedContinuationPoints).toEqual({});
+    expect(warn).toHaveBeenCalledWith(
+      "sync.continuation.conflict",
+      expect.objectContaining({ effectiveFrom: "2026-07-01" }),
+    );
+    // Monotonic: the backfill's older high-water mark must not rewind the stored one.
+    expect(await getContinuationPoint(db, "Subject2")).toBe("2026-08-10T15:32:59.989017+00:00");
+    expect(result.diagnostics.continuationAfter).toBe("2026-08-10T15:32:59.989017+00:00");
+
+    sqlite.close();
+  });
+
+  it("keeps the stored continuation point when the fetch returns none", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: {},
+      referenceNumbers: [],
+    });
+
+    await setContinuationPoint(db, "Subject2", "2025-01-31T00:00:00Z");
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    expect(await getContinuationPoint(db, "Subject2")).toBe("2025-01-31T00:00:00Z");
+
+    sqlite.close();
+  });
+
+  it("logs the effective query start, which the continuation point can move past windowFrom", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2026-08-20T00:00:00+00:00" },
+      referenceNumbers: [],
+    });
+    const info = vi.fn();
+
+    await setContinuationPoint(db, "Subject2", "2026-08-10T15:32:59.989017+00:00");
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices, logger: { info } },
+    );
+
+    expect(info).toHaveBeenCalledWith(
+      "sync.fetch.started",
+      expect.objectContaining({
+        effectiveFrom: "2026-08-10T15:32:59.989017+00:00",
+        continuationApplied: true,
+        windowStartSkipped: true,
+      }),
+    );
+
+    sqlite.close();
+  });
+
   it("reports progress via the injected logger", async () => {
     const { db, sqlite } = createDb(":memory:");
     await seedCategorizationRules(db);

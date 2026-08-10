@@ -1,6 +1,6 @@
 import { PassThrough } from "node:stream";
 import type { FastifyInstance } from "fastify";
-import { KsefRateLimitError } from "ksef-client";
+import { KsefRateLimitError, KsefValidationError } from "ksef-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCategory } from "../db/categories.js";
 import type { Db } from "../db/client.js";
@@ -255,7 +255,7 @@ describe("API server", () => {
       const lifecycle = output
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line) as { event?: string; syncRunId?: number })
+        .map((line) => JSON.parse(line) as { event?: string; syncRunId?: number; stage?: string })
         .filter((entry) => entry.event?.startsWith("sync."));
       expect(lifecycle.slice(0, 8).map((entry) => entry.event)).toEqual([
         "sync.started",
@@ -275,6 +275,8 @@ describe("API server", () => {
         "sync.failed",
       ]);
       expect(new Set(lifecycle.slice(8).map((entry) => entry.syncRunId))).toEqual(new Set([2]));
+      // The second run failed right after the client stage, before any fetch.
+      expect(lifecycle.at(-1)).toMatchObject({ event: "sync.failed", stage: "client" });
     });
 
     it("invokes the injected sync function and returns the invoice count", async () => {
@@ -301,7 +303,7 @@ describe("API server", () => {
           windowFrom: "2025-01-01",
           windowTo: "2025-01-31",
         },
-        { logger: { info: expect.any(Function) } },
+        { logger: { info: expect.any(Function), warn: expect.any(Function) } },
       );
     });
 
@@ -431,6 +433,36 @@ describe("API server", () => {
         errorType: "KsefRateLimitError",
         httpStatus: 429,
         retryAfterSeconds: 180,
+      });
+    });
+
+    it("returns 400 when the SDK rejects the requested window before calling KSeF", async () => {
+      sync.mockRejectedValueOnce(
+        new KsefValidationError(
+          "Invoice query filters.dateRange.to must be greater than or equal to dateRange.from.",
+        ),
+      );
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2026-07-01", windowTo: "2026-07-31" },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect((response.json() as { error: string }).error).toMatch(/dateRange\.to/);
+
+      const runsResponse = await fastify.inject({
+        method: "GET",
+        url: "/sync/runs",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const body = runsResponse.json() as { runs: Array<Record<string, unknown>> };
+      expect(body.runs[0]).toMatchObject({
+        status: "error",
+        errorType: "KsefValidationError",
       });
     });
   });
