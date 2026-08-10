@@ -3,7 +3,7 @@ import { installedVersions, proxyConfigurationWarning, startupContext } from "./
 
 describe("startupContext", () => {
   it("finds the installed application and SDK versions", () => {
-    expect(installedVersions()).toEqual({ appVersion: "0.1.0", ksefClientVersion: "0.6.1" });
+    expect(installedVersions()).toEqual({ appVersion: "0.1.0", ksefClientVersion: "0.7.1" });
   });
 
   it("contains useful runtime context without identifiers or secrets", () => {
