@@ -24,7 +24,10 @@
 
 Phases 0–7 are implemented. Phase 8 is the next active phase; its shared persistence primitive (`insertManualInvoice`) and `source = "manual"` schema support already exist from Phase 3, but there is no manual-entry domain service, API route, form, or feature-level test yet. Phase 9 remains explicitly deferred.
 
-The separate [`IMPORT_OBSERVABILITY_PLAN.md`](./IMPORT_OBSERVABILITY_PLAN.md) workstream is implemented: imports now have correlated structured lifecycle logs, durable timings/continuation/count/error diagnostics, expandable UI details, safe error classification, and sanitized startup context. Quota, retry, continuation, and export-window behavior was intentionally unchanged. This preparatory workstream does not renumber or replace Phase 8.
+Two companion workstreams do not renumber or replace Phase 8:
+
+- **[`IMPORT_OBSERVABILITY_PLAN.md`](./IMPORT_OBSERVABILITY_PLAN.md)** — implemented. Imports now have correlated structured lifecycle logs, durable timings/continuation/count/error diagnostics, expandable UI details, safe error classification, and sanitized startup context. Quota, retry, continuation, and export-window behavior was intentionally unchanged.
+- **[`INVOICE_ITEMS_PLAN.md`](./INVOICE_ITEMS_PLAN.md)** — pending. Line-item persistence and display: schema, parser, repository, sync integration, backfill, API, and expandable-row UI to query the complete `raw_xml` structure of all 2 437 imported invoice items.
 
 Verified on 2026-08-10 with Node 22.23.1: 125 backend tests and 30 frontend tests pass; backend and frontend typechecks and production builds pass. Biome passes for tracked source files (the only warning is the oversized, untracked `design/chat.json` chat export, which must not be committed).
 
