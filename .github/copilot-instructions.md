@@ -1,10 +1,15 @@
 # KSeF Exporter Agent Context
 
+This is the shared, tool-agnostic agent context for the repository. `CLAUDE.md` imports
+it rather than duplicating it, and holds only Claude Code specifics. Add durable rules
+here so every assistant picks them up.
+
 ## Start here
 
 - Read `design/SPEC.md` for product requirements and KSeF mechanics.
 - Read `design/IMPLEMENTATION_PLAN.md` for phase status and the next work. Treat its "Current implementation status" section as authoritative; do not infer completion from scaffolding alone.
 - Read `design/IMPORT_OBSERVABILITY_PLAN.md` before changing import logging, diagnostics, or traceability. Its implementation is complete and its boundary still excludes quota-behavior changes unless explicitly requested.
+- Read `design/INVOICE_ITEMS_PLAN.md` before touching invoice line items. It is a planned, not-yet-implemented workstream (schema, parser, repository, sync integration, backfill, API, expandable-row UI) that derives items from the already-stored `invoices.raw_xml` and makes no new KSeF calls.
 - Read `README.md` for local setup and runtime commands.
 - Phases 0–7 are implemented. Phase 8 (manual entry) is next. Phase 9 is deferred and must not be started without an explicit request.
 
