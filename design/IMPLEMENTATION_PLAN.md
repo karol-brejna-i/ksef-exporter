@@ -13,7 +13,7 @@
 - **Testing is mandatory, not optional.** Every feature or change implemented from this plan must ship with automated tests covering it. A feature is only considered "done" once its tests exist **and pass** (verified by actually running them). Never report a phase/task as complete without this.
 - **Test framework:** [Vitest](https://vitest.dev/).
 - **No real network calls to KSeF in unit tests.** All KSeF HTTP interactions must be mockable/injectable (e.g. via `ksef-client`'s options or an HTTP mocking layer) so the default test run is fast, deterministic, and doesn't depend on external systems. Optional integration tests against `https://api-test.ksef.mf.gov.pl` may be added later, gated behind an environment variable so they don't run by default.
-- **Language/runtime:** TypeScript, Node.js ≥ 22.13 (`ksef-client` requires ≥ 20, but the pinned pnpm 11 runtime requires ≥ 22.13). Use the version in `.nvmrc`.
+- **Language/runtime:** TypeScript, Node.js ≥ 24 (`ksef-client` requires ≥ 20 and pnpm 11 requires ≥ 22.13; the repo standardised on Node 24, the current Active LTS, on 2026-08-13). Use the version in `.nvmrc`.
 - **Package manager:** pnpm.
 - **Linting/formatting:** [Biome](https://biomejs.dev/) — a single fast tool replacing ESLint + Prettier; type-aware checks are still covered separately via `tsc --noEmit` (`pnpm run typecheck`).
 - **Database:** SQLite via [Drizzle ORM](https://orm.drizzle.team/) — zero-ops, fits self-hosted single-user deployment; swappable later if multi-user/cloud requires it.
@@ -29,7 +29,7 @@ Two companion workstreams do not renumber or replace Phase 8:
 - **[`IMPORT_OBSERVABILITY_PLAN.md`](./IMPORT_OBSERVABILITY_PLAN.md)** — implemented. Imports now have correlated structured lifecycle logs, durable timings/continuation/count/error diagnostics, expandable UI details, safe error classification, and sanitized startup context. Quota, retry, continuation, and export-window behavior was intentionally unchanged.
 - **[`INVOICE_ITEMS_PLAN.md`](./INVOICE_ITEMS_PLAN.md)** — implemented (2026-08-12). Line items are now persisted and displayed: `invoice_items` table (migration `0003`), parser extraction of all 25 FA(3) `FaWiersz` fields, repository, sync integration with `itemsInsertedCount`/`itemsFailedCount` diagnostics, `pnpm run backfill:items`, `GET /invoices/:id/items`, and an expandable row in the invoices table. Backfilled the existing data from stored `raw_xml` with no KSeF calls: 249 invoices → 2 437 items, 0 failures, per-VAT-rate reconciliation 202/202. Backend 178 tests, web 46.
 
-Verified on 2026-08-12: 178 backend tests and 46 frontend tests pass; backend and frontend typechecks and production builds pass. Biome passes for tracked source files (the only warning is the oversized, untracked `design/chat.json` chat export, which must not be committed). The previous baseline was 125 backend / 30 frontend tests on 2026-08-10.
+Re-verified on 2026-08-13 with Node 24.16.0 (the runtime was moved from 22.23.1 to 24.16.0 that day; `@types/node` bumped to `^24` and `better-sqlite3` rebuilt for ABI 137): 178 backend tests and 46 frontend tests pass; backend and frontend typechecks and the frontend production build pass; the API boots and serves. Biome passes for tracked source files (the only warning is the oversized, untracked `design/chat.json` chat export, which must not be committed). The previous baseline was 125 backend / 30 frontend tests on 2026-08-10 under Node 22.23.1.
 
 ---
 

@@ -163,7 +163,7 @@ Each invoice XML (FA(2)/FA(3) logical structure) should be parsed into (at minim
 
 ### 3.5 Technology choice
 
-- **Backend:** Node.js ≥ 22.13 / TypeScript. The KSeF SDK itself supports Node.js ≥ 20, but the repository's pinned pnpm 11 runtime requires Node.js ≥ 22.13; `.nvmrc` is authoritative for local development.
+- **Backend:** Node.js ≥ 24 / TypeScript. The KSeF SDK itself supports Node.js ≥ 20 and pnpm 11 requires ≥ 22.13, but the repository standardised on Node 24 (the current Active LTS) on 2026-08-13; `.nvmrc` is authoritative for local development.
 - **Package manager:** pnpm.
 - **Lint/format:** Biome (single tool, replaces ESLint + Prettier).
 - **KSeF client library:** [`ksef-client`](https://github.com/smekcio/ksef-client-typescript) (npm package `ksef-client`), a community-maintained, MIT-licensed TypeScript SDK targeting KSeF API v2.6.0. Covers KSeF-token authentication, XAdES certificate authentication, and export/incremental-export workflows — i.e., everything described in §3.1–§3.2.

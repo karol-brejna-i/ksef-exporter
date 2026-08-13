@@ -23,11 +23,22 @@ The shared Conventional Commits rules apply in full. In addition:
 
 ## Local environment quirks
 
-- `.nvmrc` pins **22.23.1**, but this machine runs **Node 24.16.0**. The mismatch breaks
-  the `better-sqlite3` native binding: `pnpm test` fails most backend tests with
-  `NODE_MODULE_VERSION 127 … requires 137`. Fix it with `pnpm rebuild better-sqlite3`.
-  This is an environment problem, never a code regression — do not change test or source
-  code in response to it.
+- `.nvmrc` pins **24.16.0**, which is also this machine's default `node`, so an agent shell
+  and the user's interactive shell now agree and no `PATH` prefix is needed. The repo was on
+  22.23.1 until 2026-08-13; if you find a shell on 22, that is the stale side, not this one.
+- `better-sqlite3` ships a **single-ABI** native binding, so it serves exactly one Node
+  version at a time. If the first `createDb()` call throws `ERR_DLOPEN_FAILED …
+  NODE_MODULE_VERSION`, read the two numbers as ABIs, not versions: Node 24 is **137** and
+  Node 22 is **127**, so "requires 137" means the binding was built by a Node 22 shell. Fix
+  it with `pnpm rebuild better-sqlite3` under 24. This is an environment problem, never a
+  code regression — do not change test or source code in response to it.
+- `require("better-sqlite3")` alone does **not** load the addon; it is `dlopen`ed lazily on
+  the first `new Database()`. A bare require therefore "passes" against a mismatched
+  binding — always instantiate when probing which ABI is installed.
+- `libxmljs2` (a transitive, optional `ksef-client` dependency) is a second native addon and
+  ships prebuilds for Node 24 only. It is loaded lazily via `await import()` behind
+  `validateFa3XmlXsd` — FA(3) issuing-side XSD validation this read-only app never calls —
+  so it is inert here, but it is another reason not to drop back to 22.
 - Kill any `tsx watch src/api/main.ts` you start. A forgotten one holds port 3000 (the
   next `pnpm run dev:api` dies with `EADDRINUSE`) and keeps the live SQLite file open in
   WAL mode, which also makes `?mode=ro` snapshots unreliable.

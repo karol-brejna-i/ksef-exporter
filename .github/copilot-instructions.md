@@ -24,7 +24,9 @@ here so every assistant picks them up.
 
 ## Runtime and validation
 
-- Use the Node version in `.nvmrc` (minimum supported version is 22.13 because pnpm 11 requires it).
+- Use the Node version in `.nvmrc` (24.16.0; minimum supported version is 24). Node 24 is the
+  only version both native addons — `better-sqlite3` and the transitive, optional `libxmljs2` —
+  have bindings for here, so do not run the backend under an older Node.
 - Backend tests: `pnpm test`.
 - Frontend tests: `pnpm --dir web test`.
 - Backend typecheck: `pnpm run typecheck`.

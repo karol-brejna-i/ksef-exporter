@@ -14,7 +14,7 @@ This is a two-part app:
 
 ## Prerequisites
 
-- Node.js ≥ 22.13 (use the version in `.nvmrc`)
+- Node.js ≥ 24 (use the version in `.nvmrc`, currently 24.16.0)
 - pnpm (pinned via `packageManager` in `package.json`; run `corepack enable` if `pnpm` isn't
   already installed)
 
