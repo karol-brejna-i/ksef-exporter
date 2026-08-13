@@ -1,5 +1,6 @@
 import "dotenv/config";
 import type { KsefClient } from "ksef-client";
+import { seedCategorizationRules } from "../categorization/seed-rules.js";
 import { loadConfig } from "../config/env.js";
 import { createDb } from "../db/client.js";
 import { KsefSessionManager } from "../ksef/client.js";
@@ -16,6 +17,11 @@ async function main(): Promise<void> {
   const proxyWarning = proxyConfigurationWarning(process.env);
   if (proxyWarning) console.warn(proxyWarning);
   const { db } = createDb(config.DATABASE_PATH);
+  // Idempotent (upsert keyed on matchType/matchValue), so it is safe on every
+  // boot. Without it the database has no categories or Tier-1 rules at all,
+  // which leaves the UI's category dropdown empty and Phase 4 categorization
+  // inert -- see design/INVOICE_ITEMS_PLAN.md §4.
+  await seedCategorizationRules(db);
   const sessionManager = new KsefSessionManager(config);
 
   const fastify = buildServer({
