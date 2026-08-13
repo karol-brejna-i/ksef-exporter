@@ -1,10 +1,46 @@
 import { describe, expect, it, vi } from "vitest";
 import { seedCategorizationRules } from "./categorization/seed-rules.js";
 import { createDb } from "./db/client.js";
+import { listInvoiceItems } from "./db/invoice-items.js";
 import { getInvoiceByKsefNumber, updateInvoiceCategory } from "./db/invoices.js";
+import { createSyncRun, markSyncRunSuccess } from "./db/sync-runs.js";
 import { getContinuationPoint, setContinuationPoint } from "./db/sync-state.js";
+import type { InvoiceItemRecord } from "./ksef/invoice-parser.js";
 import type { FetchPurchaseInvoicesResult } from "./ksef/invoices.js";
 import { syncPurchaseInvoices } from "./sync.js";
+
+/** A parsed FaWiersz line, with every optional field null unless overridden. */
+function item(overrides: Partial<InvoiceItemRecord> = {}): InvoiceItemRecord {
+  return {
+    ordinal: 1,
+    lineNumber: 1,
+    uuId: null,
+    deliveryDate: null,
+    name: "Stripsy z kurczaka 1kg",
+    indexCode: null,
+    gtin: null,
+    pkwiu: null,
+    cn: null,
+    pkob: null,
+    unit: "szt.",
+    quantity: 6,
+    unitPriceNet: 41.19,
+    unitPriceGross: null,
+    discount: null,
+    netValue: 247.14,
+    grossValue: null,
+    vatValue: null,
+    vatRate: "5",
+    vatRateOss: null,
+    annex15: null,
+    excise: null,
+    gtuCode: null,
+    procedureCode: null,
+    exchangeRate: null,
+    correctionStateBefore: null,
+    ...overrides,
+  };
+}
 
 function record(overrides: Partial<FetchPurchaseInvoicesResult["invoices"][number]> = {}) {
   return {
@@ -18,6 +54,7 @@ function record(overrides: Partial<FetchPurchaseInvoicesResult["invoices"][numbe
     grossTotal: 123.45,
     currency: "PLN",
     rawXml: "<Faktura/>",
+    items: [],
     ...overrides,
   };
 }
@@ -376,6 +413,263 @@ describe("syncPurchaseInvoices", () => {
     );
 
     expect(result.hasMore).toBe(false);
+
+    sqlite.close();
+  });
+
+  it("persists the line items of a newly imported invoice", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [
+        record({
+          items: [
+            item({ ordinal: 1, lineNumber: 1, name: "Energia elektryczna", vatRate: "23" }),
+            // Same line number as ordinal 1, as correction invoices emit it.
+            item({ ordinal: 2, lineNumber: 1, correctionStateBefore: true }),
+            item({ ordinal: 3, lineNumber: 2, netValue: null, grossValue: 5500, vatRate: "zw" }),
+          ],
+        }),
+      ],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    const invoiceId = result.invoices[0]?.id;
+    if (invoiceId === undefined) throw new Error("test setup bug: invoice not persisted");
+    const items = await listInvoiceItems(db, invoiceId);
+
+    expect(items.map((row) => row.ordinal)).toEqual([1, 2, 3]);
+    expect(items[0]?.name).toBe("Energia elektryczna");
+    expect(items[1]?.correctionStateBefore).toBe(true);
+    expect(items[2]).toMatchObject({ netValue: null, grossValue: 5500, vatRate: "zw" });
+    expect(result.diagnostics).toMatchObject({ itemsInsertedCount: 3, itemsFailedCount: 0 });
+    // Stamped, so a re-sync (and the backfill) both know to leave this invoice alone.
+    expect(
+      (await getInvoiceByKsefNumber(db, record().ksefNumber))?.itemsExtractedAt,
+    ).not.toBeNull();
+
+    sqlite.close();
+  });
+
+  it("does not duplicate items when the same window is re-synced", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const invoiceRecord = record({
+      items: [item({ ordinal: 1 }), item({ ordinal: 2, lineNumber: 2 })],
+    });
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [invoiceRecord],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    const first = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+    const second = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    const invoiceId = first.invoices[0]?.id;
+    if (invoiceId === undefined) throw new Error("test setup bug: invoice not persisted");
+    expect(await listInvoiceItems(db, invoiceId)).toHaveLength(2);
+    expect(first.diagnostics.itemsInsertedCount).toBe(2);
+    // Already extracted, so the second run skips it entirely rather than
+    // rewriting the same rows.
+    expect(second.diagnostics).toMatchObject({ itemsInsertedCount: 0, itemsFailedCount: 0 });
+
+    sqlite.close();
+  });
+
+  it("keeps the invoice stored and counts the failure when item extraction fails", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [
+        // Two lines claiming the same document position violates
+        // invoice_items_invoice_ordinal_unique, so the whole item transaction
+        // rolls back -- the closest stand-in for any item-write failure.
+        record({ items: [item({ ordinal: 1 }), item({ ordinal: 1 })] }),
+      ],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+    const warn = vi.fn();
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices, logger: { info: vi.fn(), warn } },
+    );
+
+    // The import still succeeded: items are supplementary detail (§6.1).
+    expect(result.diagnostics).toMatchObject({
+      insertedCount: 1,
+      itemsInsertedCount: 0,
+      itemsFailedCount: 1,
+    });
+    const stored = await getInvoiceByKsefNumber(db, record().ksefNumber);
+    expect(stored?.grossTotal).toBe(123.45);
+    // NULL, so the backfill can retry it later without any KSeF call.
+    expect(stored?.itemsExtractedAt).toBeNull();
+    expect(stored ? await listInvoiceItems(db, stored.id) : null).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "sync.items.failed",
+      expect.objectContaining({ ksefNumber: record().ksefNumber, itemCount: 2 }),
+    );
+
+    sqlite.close();
+  });
+
+  it("retries extraction on the next sync after a failure, and succeeds", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const failing = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record({ items: [item({ ordinal: 1 }), item({ ordinal: 1 })] })],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+    const succeeding = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record({ items: [item({ ordinal: 1 })] })],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    const window = { windowFrom: "2025-01-01", windowTo: "2025-01-31" };
+    await syncPurchaseInvoices(db, fakeClient(), window, { fetchInvoices: failing });
+    const second = await syncPurchaseInvoices(db, fakeClient(), window, {
+      fetchInvoices: succeeding,
+    });
+
+    expect(second.diagnostics).toMatchObject({
+      duplicateCount: 1,
+      itemsInsertedCount: 1,
+      itemsFailedCount: 0,
+    });
+
+    sqlite.close();
+  });
+
+  it("treats an invoice with zero items as a successful extraction, not a failure", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // FaWiersz is minOccurs=0 in FA(3) (advance invoices, some corrections).
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record({ items: [] })],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+    const warn = vi.fn();
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices, logger: { info: vi.fn(), warn } },
+    );
+
+    expect(result.diagnostics).toMatchObject({ itemsInsertedCount: 0, itemsFailedCount: 0 });
+    // Stamped: "extracted, genuinely empty" is not "never extracted" (§6.3).
+    expect(
+      (await getInvoiceByKsefNumber(db, record().ksefNumber))?.itemsExtractedAt,
+    ).not.toBeNull();
+    expect(warn).not.toHaveBeenCalledWith("sync.items.failed", expect.anything());
+
+    sqlite.close();
+  });
+
+  it("reports the item stage through the injected logger", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record({ items: [item({ ordinal: 1 }), item({ ordinal: 2, lineNumber: 2 })] })],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+    const info = vi.fn();
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices, logger: { info } },
+    );
+
+    expect(info).toHaveBeenCalledWith(
+      "sync.items.started",
+      expect.objectContaining({ pendingCount: 1, skippedCount: 0 }),
+    );
+    expect(info).toHaveBeenCalledWith(
+      "sync.items.completed",
+      expect.objectContaining({
+        itemsInsertedCount: 2,
+        itemsFailedCount: 0,
+        extractedInvoiceCount: 1,
+      }),
+    );
+    expect(info).toHaveBeenCalledWith(
+      "sync.persist.completed",
+      expect.objectContaining({ itemsInsertedCount: 2, itemsFailedCount: 0 }),
+    );
+
+    sqlite.close();
+  });
+
+  it("carries the item counters into the sync_runs audit row", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [
+        record({ items: [item({ ordinal: 1 })] }),
+        record({
+          ksefNumber: "5265877635-2025-01-16-000002-00-XXXXXXXXXX",
+          items: [item({ ordinal: 1 }), item({ ordinal: 1 })],
+        }),
+      ],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    // Mirrors how POST /sync records a run around the sync call.
+    const run = await createSyncRun(db, { windowFrom: "2025-01-01", windowTo: "2025-01-31" });
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+    const stored = await markSyncRunSuccess(db, run.id, {
+      completedAt: "2025-02-01T10:00:01.000Z",
+      durationMs: 1000,
+      invoiceCount: result.invoices.length,
+      hasMore: result.hasMore,
+      ...result.diagnostics,
+    });
+
+    expect(stored.itemsInsertedCount).toBe(1);
+    expect(stored.itemsFailedCount).toBe(1);
 
     sqlite.close();
   });

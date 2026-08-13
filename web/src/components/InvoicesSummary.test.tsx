@@ -19,6 +19,8 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
     categoryId: 1,
     categorizationConfidence: "matched",
     createdAt: "2025-01-16T00:00:00.000Z",
+    itemCount: 0,
+    itemsExtractedAt: "2025-01-16T00:00:00.000Z",
     ...overrides,
   };
 }

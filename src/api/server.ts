@@ -13,7 +13,8 @@ import { correctInvoiceCategory, InvoiceNotFoundError } from "../categorization/
 import type { AppConfig } from "../config/env.js";
 import { listCategories } from "../db/categories.js";
 import type { Db } from "../db/client.js";
-import { listInvoices } from "../db/invoices.js";
+import { countInvoiceItemsByInvoice, listInvoiceItems } from "../db/invoice-items.js";
+import { getInvoiceById, listInvoices } from "../db/invoices.js";
 import {
   createSyncRun,
   listRecentSyncRuns,
@@ -173,6 +174,8 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
         duplicateCount: result.diagnostics.duplicateCount,
         categorizedCount: result.diagnostics.categorizedCount,
         needsReviewCount: result.diagnostics.needsReviewCount,
+        itemsInsertedCount: result.diagnostics.itemsInsertedCount,
+        itemsFailedCount: result.diagnostics.itemsFailedCount,
         hasMore: result.hasMore,
       });
       info("sync.completed", {
@@ -229,9 +232,37 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid query" });
     }
 
-    const invoices = await listInvoices(deps.db, parsed.data);
+    const rows = await listInvoices(deps.db, parsed.data);
+    const invoiceIds = rows.map((row) => row.id);
+    const itemCountMap = await countInvoiceItemsByInvoice(deps.db, invoiceIds);
+
+    const invoices = rows.map((row) => ({
+      ...row,
+      itemCount: itemCountMap.get(row.id) ?? 0,
+      itemsExtractedAt: row.itemsExtractedAt,
+    }));
+
     return { invoices };
   });
+
+  fastify.get(
+    "/invoices/:id/items",
+    { onRequest: [fastify.authenticate] },
+    async (request, reply) => {
+      const parsed = invoiceIdParamsSchema.safeParse(request.params);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invoice id must be a positive integer" });
+      }
+
+      const invoice = await getInvoiceById(deps.db, parsed.data.id);
+      if (!invoice) {
+        return reply.code(404).send({ error: "invoice not found" });
+      }
+
+      const items = await listInvoiceItems(deps.db, parsed.data.id);
+      return { items };
+    },
+  );
 
   fastify.get("/categories", { onRequest: [fastify.authenticate] }, async () => {
     const categories = await listCategories(deps.db);

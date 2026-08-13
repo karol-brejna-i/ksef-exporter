@@ -1,6 +1,7 @@
 import type { ContinuationPoints, KsefClient } from "ksef-client";
 import { categorize } from "./categorization/engine.js";
 import type { Db } from "./db/client.js";
+import { replaceInvoiceItems } from "./db/invoice-items.js";
 import {
   getInvoiceByKsefNumber,
   type InvoiceRow,
@@ -9,6 +10,7 @@ import {
 } from "./db/invoices.js";
 import { listRules } from "./db/rules.js";
 import { getContinuationPoint, setContinuationPoint } from "./db/sync-state.js";
+import type { InvoiceItemRecord } from "./ksef/invoice-parser.js";
 import { fetchPurchaseInvoices } from "./ksef/invoices.js";
 
 /** KSeF's buyer role (see design/SPEC.md §3); Parkowa only pulls its purchases. */
@@ -53,6 +55,14 @@ export interface SyncDiagnostics {
   duplicateCount: number;
   categorizedCount: number;
   needsReviewCount: number;
+  /** Line items written across the run (see design/INVOICE_ITEMS_PLAN.md §5 Step 4). */
+  itemsInsertedCount: number;
+  /**
+   * Invoices whose line-item extraction failed. The invoices themselves are
+   * still stored and still counted in `insertedCount`: items are supplementary
+   * detail and never fail an import (§6.1).
+   */
+  itemsFailedCount: number;
   maxIterations: number;
 }
 
@@ -93,6 +103,11 @@ export interface SyncPurchaseInvoicesDeps {
  * the result. Invoices that already have a category (from a previous sync
  * or a human correction) are never re-categorized here, so this is always
  * safe to re-run.
+ *
+ * Line items are derived from the same already-parsed records in a separate
+ * stage afterwards (design/INVOICE_ITEMS_PLAN.md §5 Step 4), on the same
+ * "never clobber prior work" terms: only invoices with no recorded extraction
+ * are touched, and an item failure never fails the invoice.
  */
 export async function syncPurchaseInvoices(
   db: Db,
@@ -155,6 +170,12 @@ export async function syncPurchaseInvoices(
   const persistStartedAt = now();
   const rules = await listRules(db);
   const invoices: InvoiceRow[] = [];
+  /**
+   * Invoices whose line items still have to be derived, collected here and
+   * written in the separate items stage below so item persistence can never
+   * interleave with (or interfere with) invoice persistence.
+   */
+  const itemsPending: { row: InvoiceRow; items: InvoiceItemRecord[] }[] = [];
   let insertedCount = 0;
   let duplicateCount = 0;
   let categorizedCount = 0;
@@ -165,6 +186,17 @@ export async function syncPurchaseInvoices(
       duplicateCount++;
     } else {
       insertedCount++;
+    }
+
+    // A newly inserted row always has items_extracted_at NULL, and a re-synced
+    // one is only re-derived when no previous attempt ever recorded a result --
+    // so this single check covers both cases. Invoices already extracted are
+    // skipped, which keeps re-running a window cheap and idempotent, the same
+    // "never clobber prior work" rule categorization follows below. NULL also
+    // means a failed extraction stays retryable by `backfill:items` without
+    // touching KSeF (design/INVOICE_ITEMS_PLAN.md §6.1/§6.3).
+    if (row.itemsExtractedAt === null) {
+      itemsPending.push({ row, items: invoice.items });
     }
 
     const isUncategorized =
@@ -182,6 +214,55 @@ export async function syncPurchaseInvoices(
     categorizedCount++;
     invoices.push(await updateInvoiceCategory(db, row.id, result.categoryId, result.confidence));
   }
+
+  // Snapshotted before the items stage so the persist duration keeps measuring
+  // invoice persistence only, even though `sync.persist.completed` is emitted
+  // last (it carries the full diagnostics, item counters included).
+  const persistDurationMs = now() - persistStartedAt;
+
+  logger.info("sync.items.started", {
+    // Invoices about to have their items derived, and those whose items an
+    // earlier run already recorded (skipped entirely, no re-parse, no writes).
+    pendingCount: itemsPending.length,
+    skippedCount: fetchResult.invoices.length - itemsPending.length,
+  });
+  const itemsStartedAt = now();
+  let itemsInsertedCount = 0;
+  let itemsFailedCount = 0;
+  for (const pending of itemsPending) {
+    try {
+      // Not awaited on purpose: drizzle's better-sqlite3 transaction is
+      // synchronous, so replaceInvoiceItems returns void, not a Promise.
+      // It deletes, re-inserts, and stamps items_extracted_at in one
+      // transaction, so zero items is a recorded success (§6.3).
+      replaceInvoiceItems(
+        db,
+        pending.row.id,
+        pending.items.map((item) => ({ invoiceId: pending.row.id, ...item })),
+      );
+      itemsInsertedCount += pending.items.length;
+    } catch (error) {
+      // §6.1: items are supplementary detail, so an extraction failure must
+      // never fail the invoice import. The invoice stays stored, its
+      // items_extracted_at stays NULL (the transaction rolled back), and the
+      // backfill can retry it later without any KSeF call.
+      itemsFailedCount++;
+      logger.warn?.("sync.items.failed", {
+        ksefNumber: pending.row.ksefNumber,
+        invoiceId: pending.row.id,
+        itemCount: pending.items.length,
+        errorType: error instanceof Error ? error.name : typeof error,
+        // Message only -- never raw invoice XML or an SDK response body.
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  logger.info("sync.items.completed", {
+    durationMs: now() - itemsStartedAt,
+    itemsInsertedCount,
+    itemsFailedCount,
+    extractedInvoiceCount: itemsPending.length - itemsFailedCount,
+  });
 
   const newContinuationPoint = fetchResult.continuationPoints[SUBJECT_TYPE];
   // Monotonic: a backfill of an earlier period must not rewind the high-water
@@ -204,10 +285,12 @@ export async function syncPurchaseInvoices(
     duplicateCount,
     categorizedCount,
     needsReviewCount,
+    itemsInsertedCount,
+    itemsFailedCount,
     maxIterations,
   };
   logger.info("sync.persist.completed", {
-    durationMs: now() - persistStartedAt,
+    durationMs: persistDurationMs,
     ...diagnostics,
     hasMore,
   });

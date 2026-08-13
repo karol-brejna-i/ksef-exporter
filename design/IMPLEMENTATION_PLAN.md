@@ -27,9 +27,9 @@ Phases 0–7 are implemented. Phase 8 is the next active phase; its shared persi
 Two companion workstreams do not renumber or replace Phase 8:
 
 - **[`IMPORT_OBSERVABILITY_PLAN.md`](./IMPORT_OBSERVABILITY_PLAN.md)** — implemented. Imports now have correlated structured lifecycle logs, durable timings/continuation/count/error diagnostics, expandable UI details, safe error classification, and sanitized startup context. Quota, retry, continuation, and export-window behavior was intentionally unchanged.
-- **[`INVOICE_ITEMS_PLAN.md`](./INVOICE_ITEMS_PLAN.md)** — pending. Line-item persistence and display: schema, parser, repository, sync integration, backfill, API, and expandable-row UI to query the complete `raw_xml` structure of all 2 437 imported invoice items.
+- **[`INVOICE_ITEMS_PLAN.md`](./INVOICE_ITEMS_PLAN.md)** — implemented (2026-08-12). Line items are now persisted and displayed: `invoice_items` table (migration `0003`), parser extraction of all 25 FA(3) `FaWiersz` fields, repository, sync integration with `itemsInsertedCount`/`itemsFailedCount` diagnostics, `pnpm run backfill:items`, `GET /invoices/:id/items`, and an expandable row in the invoices table. Backfilled the existing data from stored `raw_xml` with no KSeF calls: 249 invoices → 2 437 items, 0 failures, per-VAT-rate reconciliation 202/202. Backend 178 tests, web 46.
 
-Verified on 2026-08-10 with Node 22.23.1: 125 backend tests and 30 frontend tests pass; backend and frontend typechecks and production builds pass. Biome passes for tracked source files (the only warning is the oversized, untracked `design/chat.json` chat export, which must not be committed).
+Verified on 2026-08-12: 178 backend tests and 46 frontend tests pass; backend and frontend typechecks and production builds pass. Biome passes for tracked source files (the only warning is the oversized, untracked `design/chat.json` chat export, which must not be committed). The previous baseline was 125 backend / 30 frontend tests on 2026-08-10.
 
 ---
 

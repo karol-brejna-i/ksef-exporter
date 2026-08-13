@@ -28,6 +28,9 @@ The shared Conventional Commits rules apply in full. In addition:
   `NODE_MODULE_VERSION 127 … requires 137`. Fix it with `pnpm rebuild better-sqlite3`.
   This is an environment problem, never a code regression — do not change test or source
   code in response to it.
+- Kill any `tsx watch src/api/main.ts` you start. A forgotten one holds port 3000 (the
+  next `pnpm run dev:api` dies with `EADDRINUSE`) and keeps the live SQLite file open in
+  WAL mode, which also makes `?mode=ro` snapshots unreliable.
 - Python: always use the repository `.venv` at the root, invoked explicitly as
   `.venv/bin/python3`. Never fall back to the system `python3`.
 
@@ -46,7 +49,13 @@ The shared Conventional Commits rules apply in full. In addition:
 - Do the analysis, schema design, migration planning, and document writing directly on
   the strongest available model. Delegate only mechanical work — counting, grepping,
   extraction, boilerplate.
-- Do not spawn subagents or run workflows unless asked.
+- Subagents may be spawned for implementation work without asking, under the ownership
+  discipline in `design/INVOICE_ITEMS_PLAN.md` §10: give each agent exclusive write
+  ownership of its files, have agents run only focused tests, and run the full suite,
+  typecheck, and lint yourself at each wave boundary. Never let a concurrent agent run
+  `pnpm run db:generate` or write to `data/ksef-exporter.sqlite`.
+- Still ask before running a Workflow. Workflows can spawn dozens of agents; a handful of
+  Agent calls against a known file-ownership map is a different cost class.
 - Re-derive any figure that came from a subagent before it ships in a document. In
   `design/INVOICE_ITEMS_PLAN.md` six such numbers survived a first pass and were wrong.
 

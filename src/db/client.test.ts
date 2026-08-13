@@ -20,6 +20,7 @@ describe("createDb", () => {
       expect(tableNames.map((row) => row.name)).toEqual([
         "categories",
         "categorization_rules",
+        "invoice_items",
         "invoices",
         "sync_runs",
         "sync_state",

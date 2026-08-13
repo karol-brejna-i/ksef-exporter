@@ -51,6 +51,8 @@ describe("RecentImports", () => {
           errorCode: null,
           httpStatus: null,
           retryAfterSeconds: null,
+          itemsInsertedCount: 42,
+          itemsFailedCount: 0,
         },
         {
           id: 2,
@@ -76,6 +78,8 @@ describe("RecentImports", () => {
           errorCode: "21159",
           httpStatus: 429,
           retryAfterSeconds: 3120,
+          itemsInsertedCount: null,
+          itemsFailedCount: null,
         },
         {
           id: 3,
@@ -101,6 +105,8 @@ describe("RecentImports", () => {
           errorCode: null,
           httpStatus: null,
           retryAfterSeconds: null,
+          itemsInsertedCount: null,
+          itemsFailedCount: null,
         },
       ],
     });
@@ -137,5 +143,92 @@ describe("RecentImports", () => {
     rerender(<RecentImports token="jwt-token" refreshKey={1} />);
 
     await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  });
+
+  it("displays item counts in run details", async () => {
+    vi.spyOn(apiClient, "fetchSyncRuns").mockResolvedValue({
+      runs: [
+        {
+          id: 1,
+          requestedAt: "2025-01-16T10:00:00.000Z",
+          startedAt: "2025-01-16T10:00:00.000Z",
+          completedAt: "2025-01-16T10:00:02.500Z",
+          durationMs: 2500,
+          windowFrom: "2025-01-01",
+          windowTo: "2025-01-31",
+          status: "success",
+          invoiceCount: 5,
+          errorMessage: null,
+          continuationBefore: null,
+          continuationAfter: "2025-01-31T00:00:00.000Z",
+          fetchedCount: 5,
+          insertedCount: 4,
+          duplicateCount: 1,
+          categorizedCount: 3,
+          needsReviewCount: 2,
+          hasMore: false,
+          maxIterations: 1,
+          errorType: null,
+          errorCode: null,
+          httpStatus: null,
+          retryAfterSeconds: null,
+          itemsInsertedCount: 123,
+          itemsFailedCount: 2,
+        },
+      ],
+    });
+
+    render(<RecentImports token="jwt-token" refreshKey={0} />);
+
+    // Wait for the runs to load
+    await screen.findByText("5 invoice(s)");
+
+    // The counts should be visible in the details (123 is unique, but 2 appears multiple times)
+    expect(screen.getByText("123")).toBeInTheDocument();
+    const twos = screen.getAllByText("2");
+    // Should have at least 2 instances of "2" (needsReviewCount and itemsFailedCount)
+    expect(twos.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("displays 'Not reached' for null item counts", async () => {
+    vi.spyOn(apiClient, "fetchSyncRuns").mockResolvedValue({
+      runs: [
+        {
+          id: 1,
+          requestedAt: "2025-01-16T10:00:00.000Z",
+          startedAt: "2025-01-16T10:00:00.000Z",
+          completedAt: null,
+          durationMs: null,
+          windowFrom: "2025-01-01",
+          windowTo: "2025-01-31",
+          status: "running",
+          invoiceCount: null,
+          errorMessage: null,
+          continuationBefore: null,
+          continuationAfter: null,
+          fetchedCount: null,
+          insertedCount: null,
+          duplicateCount: null,
+          categorizedCount: null,
+          needsReviewCount: null,
+          hasMore: null,
+          maxIterations: 1,
+          errorType: null,
+          errorCode: null,
+          httpStatus: null,
+          retryAfterSeconds: null,
+          itemsInsertedCount: null,
+          itemsFailedCount: null,
+        },
+      ],
+    });
+
+    render(<RecentImports token="jwt-token" refreshKey={0} />);
+
+    await screen.findByText("In progress…");
+
+    // Should display "Not reached" for null counts
+    const notReachedTexts = screen.getAllByText("Not reached");
+    expect(notReachedTexts.length).toBeGreaterThan(0);
   });
 });

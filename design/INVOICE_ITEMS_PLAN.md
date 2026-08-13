@@ -1,8 +1,11 @@
 # KSeF Exporter — Invoice Line Items: Persistence & Display
 
-**Last updated:** 2026-08-11
+**Last updated:** 2026-08-12
 
-**Status:** Plan — not yet implemented.
+**Status:** Implemented (2026-08-12). All seven steps of §5 are in place and §8's checks
+passed against the real database — 249 invoices → 2 437 items, 0 failures, reconciliation
+202/202. The analysis in §§2–4 and the policies in §6 remain the durable reference; §8 and
+§10.6 record what actually happened, including where this plan was wrong.
 
 **Companion to** [`SPEC.md`](./SPEC.md) and [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md).
 This is a standalone workstream document (same pattern as
@@ -403,7 +406,13 @@ Better companions, already in the database:
 
 ---
 
-## 4. Unrelated bug found while investigating (flagged, not fixed here)
+## 4. Unrelated bug found while investigating (fixed 2026-08-12)
+
+> **Fixed.** [`src/api/main.ts`](../src/api/main.ts) now calls `seedCategorizationRules(db)`
+> at startup. Verified by booting the API against the real database: it went from 0 categories
+> / 0 rules to **3 categories / 16 rules**. The rest of this section is kept as the record of
+> why, and the two caveats at the end still apply — notably that the 249 already-stored
+> invoices are *not* retroactively categorized.
 
 `seedCategorizationRules()`
 ([`src/categorization/seed-rules.ts`](../src/categorization/seed-rules.ts)) is **never
@@ -418,8 +427,25 @@ practice.
 
 This is out of scope here, but it **will** confuse anyone verifying the new items UI (the
 Category column will look broken). Fix separately by calling `seedCategorizationRules(db)`
-during startup in `src/api/main.ts` — Phase 4 already documents it as idempotent and safe
-to call on every boot.
+during startup in [`src/api/main.ts`](../src/api/main.ts) — it is idempotent by
+construction (`upsertRule` is keyed on `matchType`/`matchValue`) and its own doc comment
+says it is safe to call on every boot.
+
+**Recommended to fix *before* starting this workstream**, in its own commit: it is a
+two-line wiring change, it touches no file any step below owns, and without it §8's manual
+smoke check runs against a UI whose Category column is empty for every row — which reads
+as "the new work broke categorization".
+
+Two caveats to set expectations. Seeding populates the 3 categories and 16 rules, so the
+dropdown works and **future** imports categorize; it does **not** retroactively categorize
+the 249 stored invoices, because [`src/sync.ts`](../src/sync.ts) only evaluates invoices
+returned by the current KSeF fetch (`sync.ts:170` — it does cover already-stored
+`needs_review` rows, but only among those refetched, and the `PermanentStorage`
+continuation point means a normal sync refetches none of them). A one-off re-categorization
+pass over existing rows is a separate decision. Second, `main.ts` is documented as the
+untested-by-design entry point, so the wiring line itself gets no unit test; the seeding
+function is already covered by `seed-rules.test.ts`, and verification is booting the API
+and confirming the categories exist.
 
 ---
 
@@ -429,6 +455,10 @@ Engineering conventions from [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md
 full: **TypeScript strict, Vitest tests are mandatory and must actually pass, no real
 network calls in unit tests, Biome clean, `pnpm run typecheck` clean.** A step is not done
 until its tests exist and pass.
+
+The steps are numbered for reading order, **not** for execution order — most of them are
+independent. §10 gives the dependency graph, per-step file ownership, a parallel schedule,
+and which steps can be delegated to a cheaper model.
 
 ### Step 1 — Schema: the `invoice_items` table
 
@@ -509,6 +539,21 @@ Also add one column to `invoices`:
 itemsExtractedAt: text("items_extracted_at"),
 ```
 
+And the two `sync_runs` diagnostics columns that Step 4 will populate:
+
+```ts
+/** Items written across the run; NULL on rows predating this workstream. */
+itemsInsertedCount: integer("items_inserted_count"),
+/** Invoices whose item extraction failed; the invoice itself is still stored (§6.1). */
+itemsFailedCount: integer("items_failed_count"),
+```
+
+**Declare these here, in Step 1, even though Step 4 is what writes them.** They belong to
+the same `schema.ts` edit and therefore the same generated migration: doing them in Step 4
+means a second `db:generate` and a second migration file against the live database for no
+benefit, and it makes `schema.ts` a shared write target between two steps that otherwise
+never touch the same file (§10.2).
+
 **Design notes to preserve:**
 
 - **`real` for amounts** matches the existing `invoices.gross_total` precedent. It is a
@@ -581,13 +626,27 @@ logic.
 
 ```ts
 /** Delete-then-insert in a single transaction: idempotent re-extraction. */
-export async function replaceInvoiceItems(db, invoiceId: number, items: NewInvoiceItem[]): Promise<void>
+export function replaceInvoiceItems(db, invoiceId: number, items: NewInvoiceItem[]): void
 export async function listInvoiceItems(db, invoiceId: number): Promise<InvoiceItemRow[]>   // ORDER BY ordinal
 export async function countInvoiceItemsByInvoice(db, invoiceIds: number[]): Promise<Map<number, number>>
 ```
 
 `replaceInvoiceItems` also stamps `invoices.items_extracted_at` inside the same
 transaction, so "items written" and "extraction recorded" can never disagree.
+
+Three implementation facts callers must know:
+
+- **`replaceInvoiceItems` is synchronous**, unlike its siblings. Drizzle's better-sqlite3
+  driver runs `db.transaction()` synchronously and cannot await an async callback, so
+  returning `Promise<void>` would be a lie. Call it without `await`.
+- **It inserts in chunks of 500 rows**, not one multi-row statement. SQLite caps bound
+  parameters per statement (`SQLITE_MAX_VARIABLE_NUMBER`, 32 766 here) and at 27 columns
+  per row a single statement breaks past roughly 1 200 lines — unreachable in today's data
+  (max 61) but reachable by a legal FA(3) document (`maxOccurs="10000"`).
+- **`countInvoiceItemsByInvoice` omits invoices with zero items** from the returned map,
+  following SQL `GROUP BY`. Callers must default a missing key to `0` rather than treating
+  it as unknown; distinguishing "zero items" from "never extracted" is what
+  `items_extracted_at` is for (§6.3).
 
 ### Step 4 — Sync integration
 
@@ -597,13 +656,18 @@ still has `items_extracted_at IS NULL`. Skip invoices already extracted, so re-r
 window stays cheap and idempotent (matching the existing "never clobber prior work"
 principle used for categories).
 
-Extend `SyncDiagnostics` with `itemsInsertedCount` and `itemsFailedCount`, add matching
-nullable columns to `sync_runs`, and surface them through `POST /sync` →
-`markSyncRunSuccess` → `GET /sync/runs` → `RunDetails`. This reuses the diagnostics
+Extend `SyncDiagnostics` with `itemsInsertedCount` and `itemsFailedCount` and persist them
+via `markSyncRunSuccess` in [`src/db/sync-runs.ts`](../src/db/sync-runs.ts). The `sync_runs`
+columns themselves already exist — Step 1 declared them. This reuses the diagnostics
 pipeline Phase 7 / `IMPORT_OBSERVABILITY_PLAN.md` already built; do not invent a parallel
 mechanism. Emit `sync.items.started` / `sync.items.completed` / `sync.items.failed`
 structured log events following the existing `sync.<stage>.<phase>` naming convention
 (`stageOfEvent()` in [`src/api/server.ts`](../src/api/server.ts) parses three-part names).
+
+**Step 4 stops at the persistence boundary and does not edit
+[`src/api/server.ts`](../src/api/server.ts).** That file already reads diagnostics for
+`GET /sync/runs`, so it is a shared write target; it belongs exclusively to Step 6, and
+displaying the new counters in `RunDetails` belongs to Step 7. See §10.2.
 
 ### Step 5 — Backfill the 249 existing invoices
 
@@ -619,6 +683,23 @@ src/tools/backfill-invoice-items.ts"` — the same shape as the existing
   use after a parser improvement), `--limit N`.
 - Prints per-invoice results and a summary, plus the §3.6 per-VAT-rate reconciliation
   report as a **non-blocking** diagnostic.
+- Resolves the database as: first non-flag argument → `$DATABASE_PATH` → the same default
+  as `src/config/env.ts`. It does **not** call `loadConfig()`: this tool needs no KSeF
+  token, NIP, or JWT secret, and should not refuse to run because one is absent.
+- **Do not route it through `parsePurchaseInvoiceXml`.** That function requires the full
+  header *and* resolves the KSeF number — which is not in the invoice XML — from its
+  `fileName` argument. These invoices were already imported, so their header is persisted
+  already; re-validating it here only creates a way to lose items, and forces the caller to
+  smuggle a KSeF number in through a filename parameter. (The first implementation did
+  exactly this, and its tests failed because `validateKsefNumber` rejects any fixture KSeF
+  number that doesn't satisfy the real checksum.) Use `parseInvoiceFaElement(xml)` +
+  `extractInvoiceItems(fa)` from the parser module instead: one parse, no header
+  preconditions, and the same `Fa` element also yields the `P_13_x` bases the
+  reconciliation needs.
+- Report `itemsParsed` separately from `itemsInserted`. A `--dry-run` must still print the
+  item total a live run would write (§8 expects 2 437), and it must reconcile — which means
+  reconciling from the items held **in memory**, not by reading them back. Reading them
+  back reports `eligibleCount: 0` for every dry run, because nothing was written.
 
 **Expected result on the current database: 249 invoices → 2 437 items, 0 failures.**
 Treat any deviation as a parser regression and investigate before proceeding.
@@ -632,6 +713,8 @@ Add to [`src/api/server.ts`](../src/api/server.ts):
   duplicate zod schema.
 - 404 when the invoice doesn't exist; `{ items: InvoiceItemRow[] }` ordered by `ordinal`
   otherwise. An invoice with no items returns `{ items: [] }`, not a 404.
+- Because this step **owns `server.ts`** (§10.2), it also carries Step 4's
+  `itemsInsertedCount` / `itemsFailedCount` through the `GET /sync/runs` response.
 
 Add `itemCount` to each row of the `GET /invoices` response (via
 `countInvoiceItemsByInvoice`) so the UI can label the toggle and disable it when zero.
@@ -657,6 +740,13 @@ fetch keeps the landing view fast (Phase 7 made browsing the default screen).
   failure. **Reuse the exact `<details>` pattern of `RunDetails` in
   [`RecentImports.tsx`](../web/src/components/RecentImports.tsx)** — no new UI dependency,
   no router, and the existing two-item nav is unchanged.
+- [`RecentImports.tsx`](../web/src/components/RecentImports.tsx): show Step 4's
+  `itemsInsertedCount` / `itemsFailedCount` in `RunDetails`, tolerating `null` on runs that
+  predate this workstream.
+
+Everything in this step lives under `web/` and its tests mock `fetch`, so it has **no
+build-time dependency on the backend steps** and can be written in parallel with them
+against the response shapes above (§10.3).
 
 ---
 
@@ -682,8 +772,16 @@ deliberately more forgiving than the header rules.
 4. **Unknown / future FA fields are ignored, not fatal.** FA(4) or a vendor extension must
    not break the import. Because `raw_xml` is retained, nothing is unrecoverable:
    `pnpm run backfill:items --force` re-derives every item after a parser improvement.
-5. **Malformed XML** (not well-formed) already fails at the header stage with
-   `InvoiceParsingError` before items are reached — no additional handling needed. Do not
+5. **Malformed XML** — but note how little of it is actually *detectable*. On the sync path
+   it fails at the header stage with `InvoiceParsingError` before items are reached. The
+   backfill, however, deliberately does not re-parse the header (Step 5), so it relies on
+   the XML parse itself — and `fast-xml-parser` is extremely lenient. Measured against the
+   configured parser: an unclosed tag, a mismatched closing tag, a stray close tag, and
+   even the string `this is not xml` **all parse without error**, yielding zero items rather
+   than a failure. Truncation inside a tag is one of the few inputs that genuinely throws.
+   So "malformed" input mostly surfaces as *an invoice with no items*, not as a reported
+   failure. That is acceptable — `raw_xml` is retained and `--force` re-derives — but do not
+   write assertions, or read `itemsFailedCount`, as if damaged XML reliably raises. Do not
    add an item-level XML-repair path.
 6. **Reconciliation is a report, not a gate.** Use the §3.6 per-VAT-rate rule with a
    0.01 PLN tolerance, excluding invoices that have any `StanPrzed` row or any row without
@@ -737,26 +835,61 @@ table; `itemCount === 0` disables the toggle.
 
 ## 8. Verification
 
+> **Executed 2026-08-12 — all of the below passed on the real database.** Backend 178 tests
+> (baseline 132), web 46 (baseline 30), both typechecks and lint clean. Backfill: 249
+> invoices → **2 437 items, 0 failures**, per-VAT-rate reconciliation **202/202 matched, 0
+> mismatches**. Every data-integrity query below returned its expected value. Idempotency
+> confirmed on real data: an immediate re-run reports 0 eligible; `--force` re-derives all
+> 2 437 with 0 duplicate `(invoice_id, ordinal)` pairs.
+>
+> Two process notes worth keeping. First, the expected counts were re-derived independently
+> (a throwaway stdlib-`ElementTree` script over `raw_xml`, importing no project code) before
+> being compared with the backfill's output, so the check was against ground truth rather
+> than against the same parser twice. Second, run the backfill against a **copy** first, and
+> make that copy with `VACUUM INTO` — `data/ksef-exporter.sqlite` runs in WAL mode, and a
+> plain `cp` of the main file alone silently omits everything still in the `-wal`. That
+> mistake was made twice during verification and produced two confidently wrong readings
+> (including "the seed rules didn't run", when they had).
+
 Definition of done — all of these, actually executed:
 
 ```bash
-pnpm run migrate                 # 0003 applies cleanly to the real database
-pnpm run backfill:items --dry-run # reports 249 invoices / 2437 items / 0 failures
-pnpm run backfill:items          # writes them
+# Copy first. VACUUM INTO, not cp -- see the WAL note above.
+sqlite3 "file:data/ksef-exporter.sqlite?mode=ro" "VACUUM INTO '/tmp/copy.sqlite';"
+pnpm run backfill:items -- /tmp/copy.sqlite --dry-run   # 249 invoices / 2437 items / 0 failed
+pnpm run backfill:items -- /tmp/copy.sqlite             # then verify the queries below on it
+
+pnpm run backfill:items --dry-run   # only once the copy checks out
+pnpm run backfill:items             # writes; 0003 is applied by createDb, no `pnpm run migrate`
 sqlite3 data/ksef-exporter.sqlite \
   "select count(*) from invoice_items;"                     # → 2437
 sqlite3 data/ksef-exporter.sqlite \
   "select count(*) from invoices where items_extracted_at is null;"  # → 0
-pnpm test                        # backend suite (was 132 passing before this work)
-pnpm --filter ./web test         # frontend suite (was 30 passing)
+pnpm test                        # backend suite (was 132 passing before this work; now 178)
+pnpm --dir web test              # frontend suite (was 30 passing; now 46)
 pnpm run typecheck && pnpm run lint
-pnpm --filter ./web run build
+pnpm --dir web run build
 ```
+
+`createDb()` runs the migrations, so `pnpm run migrate` is redundant — and note the *dry* run
+migrates too, since it opens the database the same way. Also: once a process closes the
+database cleanly the `-wal`/`-shm` are removed, and a `?mode=ro` connection then **cannot**
+open a WAL database at all (it may not create the `-shm` it needs) — it fails with
+`unable to open database file (14)`. Copy the file and query the copy instead of reaching
+for `mode=ro` after a clean close.
 
 Then, manually, against a running stack (`pnpm run dev:api` + the web dev server): log in,
 land on the Invoices screen, expand a row and see its items; expand invoice `247` (single
 gross-priced `zw` line) and a correction invoice such as `4` (paired rows, one marked
 *before correction*).
+
+The API half of that was verified against the real running server on 2026-08-12:
+`GET /invoices/247/items` returns 401 unauthenticated, 200 with the single `zw` line
+(`netValue: null`, `grossValue: 5500`) when authenticated, and 404 for an unknown id;
+`GET /invoices` returns all 249 rows with `itemCount > 0` and no `itemsExtractedAt` null.
+Booting the API also confirmed the §4 seed fix: 3 categories and 16 rules now exist where
+the live database previously had none. The browser click-through itself is still worth doing
+by hand — it is the only part of §7's UI list that automated tests cover only in mocks.
 
 Data-integrity spot checks that should hold after the backfill:
 
@@ -802,3 +935,136 @@ Not blocking; revisit only with a concrete reason.
 - **Item-level categorization (per-line categories)** — a genuine product change, not a
   refactor; contradicts SPEC §3.4's whole-invoice model and would need the owner's input.
 - **Surfacing the reconciliation report in the UI** — currently a CLI/log-only diagnostic.
+
+---
+
+## 10. Executing this plan with parallel agents
+
+§5's steps are numbered for reading order. Executed literally as 1→2→3→4→5→6→7 they are
+seven sequential hops, but only four of those hops are actually forced. This section records
+the dependency graph, so the work can be split across concurrent agents — and so a single
+developer knows which parts are safe to interleave.
+
+### 10.1 Dependency graph and file ownership
+
+The binding constraint is **shared files**, not logic. Every step below owns its files
+exclusively; an agent must not edit a file another step owns.
+
+| Step             | Owns (exclusive write)                                                                                                        | Depends on            |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| **1** Schema     | [`src/db/schema.ts`](../src/db/schema.ts), `drizzle/migrations/0003_*.sql`                                                     | —                     |
+| **2** Parser     | [`src/ksef/invoice-parser.ts`](../src/ksef/invoice-parser.ts) + `.test.ts`                                                     | — (field list is §5)  |
+| **3** Repository | `src/db/invoice-items.ts` + `.test.ts` (both new)                                                                             | 1                     |
+| **4** Sync       | [`src/sync.ts`](../src/sync.ts) + `.test.ts`, [`src/db/sync-runs.ts`](../src/db/sync-runs.ts) + `.test.ts`                     | 1, 2, 3               |
+| **5** Backfill   | `src/invoices/backfill-items.ts` + `.test.ts`, `src/tools/backfill-invoice-items.ts`, `package.json`                           | 1, 2, 3               |
+| **6** API        | [`src/api/server.ts`](../src/api/server.ts) + `.test.ts`                                                                      | 1, 3                  |
+| **7** UI         | `web/**` only                                                                                                                 | response shapes only  |
+
+Two things make this graph much flatter than it looks:
+
+- **Step 2 does not depend on Step 1.** The parser produces plain objects, and §5 Step 1
+  fixes the field names and types in advance, so the parser and the schema can be written
+  simultaneously against the same written contract.
+- **Step 7 depends on nothing in the backend.** `web/` imports no backend code and its
+  tests mock `fetch`, so the UI can be built against the documented response shapes before
+  the endpoint exists.
+
+### 10.2 The two collisions, and how §5 now resolves them
+
+Executed naively, two files would have had two owners each. Both are already resolved
+above; this records *why*, so nobody reintroduces them.
+
+| Collision                                                              | Resolution                                                                                                                                                    |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema.ts` — Step 1 adds `invoice_items`, Step 4 adds `sync_runs` cols | **Step 1 declares both.** One `db:generate`, one migration `0003` against the real database instead of two. Better even single-threaded.                       |
+| `server.ts` — Step 4 surfaces diagnostics, Step 6 adds the endpoint     | **Step 6 owns `server.ts` outright.** Step 4 stops at `markSyncRunSuccess`; Step 6 carries the counters into `GET /sync/runs`; Step 7 renders them.            |
+
+### 10.3 Parallel schedule
+
+```
+Wave A   1 Schema   ·   2 Parser   ·   7 UI                (3 concurrent)
+Wave B   3 Repository                                      (needs 1)
+Wave C   4 Sync     ·   5 Backfill  ·   6 API              (3 concurrent, need 2+3)
+Wave D   integration, real-database backfill, §8 verification
+```
+
+Four hops instead of seven, three agents at peak. The coordinator runs full validation
+(`pnpm test`, `pnpm --dir web test`, `pnpm run typecheck`, `pnpm run lint`) at each wave
+boundary — **not** the individual agents.
+
+Rules that make the concurrency safe:
+
+- **Agents run focused tests only** (e.g. `pnpm test src/db/invoice-items.test.ts`). A
+  concurrent full-suite or `tsc --noEmit` run reports failures caused by *other* agents'
+  half-finished files, and an agent that tries to "fix" those will corrupt work it doesn't
+  own.
+- **Never run `pnpm run db:generate` outside Step 1.** Concurrent drizzle-kit invocations
+  race on `drizzle/migrations/meta/`.
+- **No agent runs the backfill against `data/ksef-exporter.sqlite`** (§10.5).
+- Agents work in the shared tree, so a git worktree per agent is unnecessary given the
+  ownership table — but if two steps ever do need the same file, isolate rather than
+  interleave.
+
+### 10.4 Which steps can go to a cheaper model
+
+Five of the seven steps are pattern-matching against code that already exists in this
+repository, and the plan supplies their content nearly verbatim. Those are safe for a
+mid-tier model (Sonnet):
+
+| Step             | Why it's mechanical                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------- |
+| **1** Schema     | §5 Step 1 contains the final TypeScript; the work is transcribe + `pnpm run db:generate`                        |
+| **3** Repository | Mirrors [`src/db/sync-runs.ts`](../src/db/sync-runs.ts); thin, typed, no business logic                         |
+| **5** Backfill   | ~~Mirrors [`src/tools/reconcile.ts`](../src/tools/reconcile.ts) and the existing `package.json` script pattern~~ — **wrong call, see §10.6**; it has to choose a parser entry point, which is a design decision |
+| **6** API        | Mirrors the existing routes; reuses `fastify.authenticate` and `invoiceIdParamsSchema` unchanged                 |
+| **7** UI         | Mirrors the `RunDetails` `<details>` pattern in [`RecentImports.tsx`](../web/src/components/RecentImports.tsx)   |
+
+Two steps should stay on the strongest available model:
+
+| Step           | Why judgement is needed                                                                                                                                                                     |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **2** Parser   | `parseTagValue: false` changes the **shared** `XMLParser` and so reaches every existing header test; plus the single-child collapse, the 25-field mapping, and `ordinal`-vs-`NrWierszaFa` semantics |
+| **4** Sync     | Touches the orchestrator behind the `maxIterations: 1` rate-limit incident; idempotency and "never clobber prior work" are easy to break in ways tests won't obviously catch                   |
+
+Step 2 additionally must **not** be interleaved with anything that consumes parser output:
+its agent runs the full backend suite and proves all 132 pre-existing tests still pass
+before Wave C starts. It is the only edit here whose blast radius reaches code no step owns.
+
+### 10.5 Not delegable
+
+- **`pnpm run backfill:items` against [`data/ksef-exporter.sqlite`](../data/) is a write to
+  real business data.** Run it manually, on a copy of the database first, and confirm §8's
+  four spot-check queries there before touching the real file.
+- **Accepting §8's numbers.** 2 437 items / 249 invoices / 0 failures is the regression
+  signal for the whole workstream; any deviation is a parser bug to investigate, not a
+  number to update.
+- **The §4 seed-rules prerequisite**, if it is taken, lands as its own commit before Wave A.
+
+### 10.6 Retrospective — how the parallel run actually went (2026-08-12)
+
+Executed as planned: Wave A (Steps 1, 2, 7) → B (3) → C (4, 6) with Step 5 alongside, then a
+7b follow-up, then Wave D by hand. Six of seven steps needed no correction beyond formatting.
+What is worth carrying into the next workstream:
+
+- **The ownership table did its job.** Three separate agents hit a failure in a file they did
+  not own and *reported* it with file, line, and cause instead of editing outside their lane
+  or deleting the assertion: the exact-table-list assertion in `src/db/client.test.ts`, the
+  `itemsExtractedAt` field missing from the hand-written `InvoiceRow` interface, and the
+  `SyncRunSuccessDiagnostics` type error in `src/api/server.ts`. That discipline is the single
+  highest-value rule in §10.
+- **Vitest does not typecheck, and that hid real breakage twice.** Making `items` required on
+  `PurchaseInvoiceRecord` left five type errors in `src/sync.test.ts` while the suite stayed
+  green. Run `pnpm run typecheck` at every wave boundary, not just the suite.
+- **"Tests pass" is not the same as "the design is right."** Step 5 reported a "test
+  infrastructure issue with KSeF number validation." The failing fixture was a symptom; the
+  actual defect was that a backfill of already-imported invoices was re-validating headers it
+  had no need for. It also contained a `require()` in an ESM module — fatal at runtime, on a
+  path no test reached, which would have aborted the real run. Read delegated code, do not
+  just run it.
+- **A subagent's diagnosis needs the same re-derivation as its numbers.** §10.5 already says
+  not to take figures on faith; the same applies to root-cause claims.
+- **Cheap models were fine for the mechanical steps** (1, 3, 6, 7) and the split in §10.4
+  held up. Step 5 was listed as mechanical and was the one that needed rework — it is the
+  only "mechanical" step that had to make a design decision (which parser entry point to
+  use), which is precisely what §10.4 says to keep off a cheaper model. Move it to the
+  strongest-model column next time.

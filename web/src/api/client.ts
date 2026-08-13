@@ -30,6 +30,37 @@ export interface Invoice {
   categoryId: number | null;
   categorizationConfidence: CategorizationConfidence;
   createdAt: string;
+  itemCount: number;
+  itemsExtractedAt: string | null;
+}
+
+export interface InvoiceItem {
+  ordinal: number;
+  lineNumber: number | null;
+  uuId: string | null;
+  deliveryDate: string | null;
+  name: string | null;
+  indexCode: string | null;
+  gtin: string | null;
+  pkwiu: string | null;
+  cn: string | null;
+  pkob: string | null;
+  unit: string | null;
+  quantity: number | null;
+  unitPriceNet: number | null;
+  unitPriceGross: number | null;
+  discount: number | null;
+  netValue: number | null;
+  grossValue: number | null;
+  vatValue: number | null;
+  vatRate: string | null;
+  vatRateOss: number | null;
+  annex15: boolean | null;
+  excise: number | null;
+  gtuCode: string | null;
+  procedureCode: string | null;
+  exchangeRate: number | null;
+  correctionStateBefore: boolean | null;
 }
 
 export type SyncRunStatus = "running" | "success" | "error";
@@ -58,6 +89,8 @@ export interface SyncRun {
   errorCode: string | null;
   httpStatus: number | null;
   retryAfterSeconds: number | null;
+  itemsInsertedCount: number | null;
+  itemsFailedCount: number | null;
 }
 
 /**
@@ -123,4 +156,11 @@ export function correctCategory(
 
 export function fetchSyncRuns(token: string): Promise<{ runs: SyncRun[] }> {
   return request("/sync/runs", {}, token);
+}
+
+export function fetchInvoiceItems(
+  token: string,
+  invoiceId: number,
+): Promise<{ items: InvoiceItem[] }> {
+  return request(`/invoices/${invoiceId}/items`, {}, token);
 }

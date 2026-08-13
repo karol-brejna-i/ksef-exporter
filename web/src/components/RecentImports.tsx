@@ -56,6 +56,10 @@ function RunDetails({ run }: { run: SyncRun }) {
         <dd>{countText(run.needsReviewCount)}</dd>
         <dt>More available</dt>
         <dd>{run.hasMore === null ? "Unknown" : run.hasMore ? "Yes" : "No"}</dd>
+        <dt>Items inserted</dt>
+        <dd>{countText(run.itemsInsertedCount)}</dd>
+        <dt>Items failed</dt>
+        <dd>{countText(run.itemsFailedCount)}</dd>
         {run.errorType && (
           <>
             <dt>Error type</dt>

@@ -22,6 +22,10 @@ export interface SyncRun {
   duplicateCount: number | null;
   categorizedCount: number | null;
   needsReviewCount: number | null;
+  /** NULL on runs recorded before line-item extraction existed, and on errors. */
+  itemsInsertedCount: number | null;
+  /** NULL as above; 0 means every extraction attempted in the run succeeded. */
+  itemsFailedCount: number | null;
   hasMore: boolean | null;
   maxIterations: number | null;
   errorType: string | null;
@@ -48,6 +52,14 @@ export interface SyncRunSuccessDiagnostics {
   duplicateCount: number;
   categorizedCount: number;
   needsReviewCount: number;
+  /**
+   * Line-item extraction outcome for the run, straight from `SyncDiagnostics`
+   * (design/INVOICE_ITEMS_PLAN.md §5 Step 4). Required rather than optional so
+   * a caller cannot quietly leave the columns NULL on a successful run --
+   * "no items written" and "nobody recorded it" must stay distinguishable.
+   */
+  itemsInsertedCount: number;
+  itemsFailedCount: number;
   hasMore: boolean;
 }
 

@@ -17,6 +17,8 @@ export interface InvoiceRow {
   grossTotal: number;
   currency: string;
   rawXml: string | null;
+  /** NULL = line-item extraction never attempted; see design/INVOICE_ITEMS_PLAN.md §6.3. */
+  itemsExtractedAt: string | null;
   categoryId: number | null;
   categorizationConfidence: CategorizationConfidence;
   createdAt: string;

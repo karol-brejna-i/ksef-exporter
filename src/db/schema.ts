@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
  * Categories used in the UI (per design/SPEC.md §2.6/§4): Media, Zakup
@@ -38,6 +38,13 @@ export const invoices = sqliteTable(
     currency: text("currency").notNull(),
     /** Null for manual entries; retained for audit/debugging per SPEC §3.4. */
     rawXml: text("raw_xml"),
+    /**
+     * When line items were last derived from raw_xml. NULL = never attempted,
+     * which is what makes the backfill resumable and idempotent, and what lets
+     * the UI distinguish "not extracted yet" from "genuinely has zero items"
+     * (FaWiersz is minOccurs=0, so zero items is legal).
+     */
+    itemsExtractedAt: text("items_extracted_at"),
     categoryId: integer("category_id").references(() => categories.id),
     /**
      * "matched": a Tier-1 rule confidently assigned the category (SPEC §4).
@@ -55,6 +62,65 @@ export const invoices = sqliteTable(
     // KSeF number at all (multiple NULLs are allowed by SQLite's unique
     // index semantics, which is exactly what we want here).
     uniqueIndex("invoices_ksef_number_unique").on(table.ksefNumber),
+  ],
+);
+
+/**
+ * Line items (FaWiersz) of KSeF invoices, derived from invoices.raw_xml.
+ * Each row is one line of an invoice, preserving document order.
+ */
+export const invoiceItems = sqliteTable(
+  "invoice_items",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    invoiceId: integer("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+    /**
+     * 1-based position of this FaWiersz in document order. This -- NOT
+     * NrWierszaFa -- is the stable identity of a line: correction invoices
+     * (RodzajFaktury = KOR) repeat NrWierszaFa for the before/after pair
+     * (19 of 249 real invoices do), so a unique key on the line number
+     * would reject or silently halve them.
+     */
+    ordinal: integer("ordinal").notNull(),
+
+    lineNumber: integer("line_number"), // NrWierszaFa
+    uuId: text("uu_id"), // UU_ID
+    deliveryDate: text("delivery_date"), // P_6A
+    name: text("name"), // P_7
+    indexCode: text("index_code"), // Indeks
+    gtin: text("gtin"), // GTIN
+    pkwiu: text("pkwiu"), // PKWiU
+    cn: text("cn"), // CN
+    pkob: text("pkob"), // PKOB
+    /** P_8A, stored verbatim -- issuers write szt./SZT/Sztuki/kg./KG interchangeably. */
+    unit: text("unit"),
+    quantity: real("quantity"), // P_8B
+    unitPriceNet: real("unit_price_net"), // P_9A
+    unitPriceGross: real("unit_price_gross"), // P_9B
+    discount: real("discount"), // P_10
+    netValue: real("net_value"), // P_11  (absent on gross-priced lines)
+    grossValue: real("gross_value"), // P_11A
+    vatValue: real("vat_value"), // P_11Vat
+    /**
+     * P_12. TEXT, never numeric: TStawkaPodatku enumerates "zw", "oo",
+     * "np I", "np II", "0 KR", "0 WDT", "0 EX" alongside 23/22/8/7/5/4/3.
+     * Live data already contains "zw".
+     */
+    vatRate: text("vat_rate"),
+    vatRateOss: real("vat_rate_oss"), // P_12_XII
+    annex15: integer("annex15", { mode: "boolean" }), // P_12_Zal_15
+    excise: real("excise"), // KwotaAkcyzy
+    gtuCode: text("gtu_code"), // GTU
+    procedureCode: text("procedure_code"), // Procedura
+    exchangeRate: real("exchange_rate"), // KursWaluty
+    /** StanPrzed: this row is the pre-correction state of its line number. */
+    correctionStateBefore: integer("correction_state_before", { mode: "boolean" }),
+  },
+  (table) => [
+    uniqueIndex("invoice_items_invoice_ordinal_unique").on(table.invoiceId, table.ordinal),
+    index("invoice_items_invoice_id_idx").on(table.invoiceId),
   ],
 );
 
@@ -125,4 +191,8 @@ export const syncRuns = sqliteTable("sync_runs", {
   errorCode: text("error_code"),
   httpStatus: integer("http_status"),
   retryAfterSeconds: integer("retry_after_seconds"),
+  /** Items written across the run; NULL on rows predating this workstream. */
+  itemsInsertedCount: integer("items_inserted_count"),
+  /** Invoices whose item extraction failed; the invoice itself is still stored (§6.1). */
+  itemsFailedCount: integer("items_failed_count"),
 });

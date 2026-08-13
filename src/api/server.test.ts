@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCategory } from "../db/categories.js";
 import type { Db } from "../db/client.js";
 import { createDb } from "../db/client.js";
+import { replaceInvoiceItems } from "../db/invoice-items.js";
 import { insertKsefInvoiceIfNotExists, updateInvoiceCategory } from "../db/invoices.js";
 import type { SyncPurchaseInvoicesResult, syncPurchaseInvoices } from "../sync.js";
 import { buildServer } from "./server.js";
@@ -40,6 +41,8 @@ const EMPTY_DIAGNOSTICS: SyncPurchaseInvoicesResult["diagnostics"] = {
   duplicateCount: 0,
   categorizedCount: 0,
   needsReviewCount: 0,
+  itemsInsertedCount: 0,
+  itemsFailedCount: 0,
   maxIterations: 1,
 };
 
@@ -180,6 +183,154 @@ describe("API server", () => {
       const response = await fastify.inject({
         method: "GET",
         url: "/invoices?month=not-a-month",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it("includes itemCount for each invoice", async () => {
+      const invoice = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      replaceInvoiceItems(db, invoice.id, [
+        { invoiceId: invoice.id, ordinal: 1, lineNumber: 1, name: "Item 1" },
+        { invoiceId: invoice.id, ordinal: 2, lineNumber: 2, name: "Item 2" },
+      ]);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { invoices: Array<{ itemCount: number }> };
+      expect(body.invoices[0]?.itemCount).toBe(2);
+    });
+
+    it("includes itemCount as 0 for an invoice with no items", async () => {
+      await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { invoices: Array<{ itemCount: number }> };
+      expect(body.invoices[0]?.itemCount).toBe(0);
+    });
+
+    it("includes itemsExtractedAt", async () => {
+      const invoice = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      replaceInvoiceItems(db, invoice.id, [
+        { invoiceId: invoice.id, ordinal: 1, lineNumber: 1, name: "Item 1" },
+      ]);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as {
+        invoices: Array<{ itemsExtractedAt: string | null }>;
+      };
+      expect(body.invoices[0]?.itemsExtractedAt).not.toBeNull();
+      expect(typeof body.invoices[0]?.itemsExtractedAt).toBe("string");
+    });
+
+    it("includes itemsExtractedAt as null when items not extracted", async () => {
+      await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as {
+        invoices: Array<{ itemsExtractedAt: string | null }>;
+      };
+      expect(body.invoices[0]?.itemsExtractedAt).toBeNull();
+    });
+  });
+
+  describe("GET /invoices/:id/items", () => {
+    it("returns items ordered by ordinal", async () => {
+      const invoice = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      replaceInvoiceItems(db, invoice.id, [
+        { invoiceId: invoice.id, ordinal: 2, lineNumber: 2, name: "Second item" },
+        { invoiceId: invoice.id, ordinal: 1, lineNumber: 1, name: "First item" },
+        { invoiceId: invoice.id, ordinal: 3, lineNumber: 3, name: "Third item" },
+      ]);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: `/invoices/${invoice.id}/items`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { items: Array<{ ordinal: number; name: string | null }> };
+      expect(body.items).toHaveLength(3);
+      expect(body.items.map((item) => item.ordinal)).toEqual([1, 2, 3]);
+      expect(body.items.map((item) => item.name)).toEqual([
+        "First item",
+        "Second item",
+        "Third item",
+      ]);
+    });
+
+    it("returns empty array for an invoice with no items", async () => {
+      const invoice = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      replaceInvoiceItems(db, invoice.id, []);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: `/invoices/${invoice.id}/items`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ items: [] });
+    });
+
+    it("returns 404 for a non-existent invoice", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices/999/items",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+
+    it("rejects a request without a token", async () => {
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices/1/items",
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("rejects a non-numeric invoice id with 400", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices/not-a-number/items",
         headers: { authorization: `Bearer ${token}` },
       });
 

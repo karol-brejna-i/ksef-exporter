@@ -52,6 +52,8 @@ describe("sync-runs repository", () => {
       duplicateCount: 2,
       categorizedCount: 8,
       needsReviewCount: 4,
+      itemsInsertedCount: 96,
+      itemsFailedCount: 1,
       hasMore: false,
     });
 
@@ -62,6 +64,36 @@ describe("sync-runs repository", () => {
     expect(updated.insertedCount).toBe(10);
     expect(updated.duplicateCount).toBe(2);
     expect(updated.hasMore).toBe(false);
+    expect(updated.itemsInsertedCount).toBe(96);
+    expect(updated.itemsFailedCount).toBe(1);
+  });
+
+  it("records zero line-item counters distinctly from the NULL of an unrecorded run", async () => {
+    const run = await createSyncRun(db, { windowFrom: "2025-01-01", windowTo: "2025-01-31" });
+
+    // A "running" row has never had an extraction result recorded...
+    expect(run.itemsInsertedCount).toBeNull();
+    expect(run.itemsFailedCount).toBeNull();
+
+    // ...whereas a successful run that found nothing to extract stores 0, which
+    // is what lets the UI tell "no items" from "predates this feature" (§6.3).
+    const updated = await markSyncRunSuccess(db, run.id, {
+      completedAt: "2025-02-01T10:00:01.000Z",
+      durationMs: 1000,
+      invoiceCount: 0,
+      continuationAfter: null,
+      fetchedCount: 0,
+      insertedCount: 0,
+      duplicateCount: 0,
+      categorizedCount: 0,
+      needsReviewCount: 0,
+      itemsInsertedCount: 0,
+      itemsFailedCount: 0,
+      hasMore: false,
+    });
+
+    expect(updated.itemsInsertedCount).toBe(0);
+    expect(updated.itemsFailedCount).toBe(0);
   });
 
   it("marks a run as failed with an error message", async () => {
@@ -96,6 +128,8 @@ describe("sync-runs repository", () => {
         duplicateCount: 0,
         categorizedCount: 0,
         needsReviewCount: 1,
+        itemsInsertedCount: 0,
+        itemsFailedCount: 0,
         hasMore: false,
       }),
     ).rejects.toThrow();
