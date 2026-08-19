@@ -1,0 +1,11 @@
+invoiceId,source,ksefNumber,invoiceNumber,sellerNip,sellerName,buyerNip,buyerName,issueDate,grossTotal,currency,category,categorizationConfidence,itemsExtracted,itemCount
+1,ksef,5260250995-20260605-A1B2C3D4E5F6-77,FV/06/2026/1188,5260250995,Orange Polska S.A.,,,2026-06-05,1230.50,PLN,Media,matched,yes,3
+2,ksef,6272738458-20260601-B2C3D4E5F6A1-12,FA/2026/06/00457,6272738458,Hurtownia Elektryczna ABC Sp. z o.o.,,,2026-06-01,1156.50,PLN,Zakup towarów,needs_review,yes,4
+3,manual,,FV/07/2026/014,7791234567,Jan Kowalski - Usługi Transportowe,,,2026-07-14,450.00,PLN,Inne,matched,no,0
+4,ksef,5213456789-20260520-C3D4E5F6A1B2-34,FV-KOR-2026/05/0033,5213456789,Papiernicze Biuro Plus Sp. z o.o.,,,2026-05-20,746.61,PLN,Zakup towarów,matched,yes,5
+5,ksef,5261027099-20260701-D4E5F6A1B2C3-56,FV/2026/07/09912,5261027099,PGE Obrót S.A.,,,2026-07-01,892.34,PLN,Media,needs_review,no,0
+6,ksef,5250007313-20260628-E5F6A1B2C3D4-78,PP/2026/06/2201,5250007313,Poczta Polska S.A.,,,2026-06-28,32.00,PLN,Inne,matched,yes,0
+7,ksef,5510005827-20260710-F6A1B2C3D4E5-90,SH/2026/07/0761,5510005827,Stalprodukt Handel Sp. z o.o.,1234567890,Firma XYZ Sp. z o.o. - Oddział Kraków,2026-07-10,2177.10,PLN,Zakup towarów,needs_review,yes,3
+8,ksef,8981234567-20260615-A2B3C4D5E6F7-11,TI/2026/06/0089,8981234567,TechImport Sp. z o.o.,,,2026-06-15,3873.00,EUR,Zakup towarów,matched,yes,4
+9,manual,,FV-2026-08-002,6511234567,Anna Nowak - Doradztwo Podatkowe,,,2026-08-02,150.00,PLN,Inne,matched,no,0
+10,ksef,6272430195-20260722-B3C4D5E6F7A8-23,TS/2026/07/33417,6272430195,Tauron Sprzedaż Sp. z o.o.,,,2026-07-22,553.51,PLN,Media,needs_review,yes,2
