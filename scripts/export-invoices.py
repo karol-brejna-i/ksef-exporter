@@ -3,7 +3,7 @@
 
 Usage:
   source .venv/bin/activate
-  python scripts/export-invoices.py [--from YYYY-MM-DD] [--to YYYY-MM-DD] [output.xlsx]
+  python scripts/export-invoices.py [--db PATH] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [output.xlsx]
 
 Defaults to exporting all invoices and writing `data/invoices-export.xlsx`.
 """
@@ -120,6 +120,13 @@ def build_xlsx(invoices: list[dict], out_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export invoices to Excel")
     parser.add_argument(
+        "--db",
+        dest="db_path",
+        default=str(DB_PATH),
+        metavar="PATH",
+        help=f"SQLite database path (default: {DB_PATH})",
+    )
+    parser.add_argument(
         "--from",
         dest="date_from",
         metavar="YYYY-MM-DD",
@@ -132,6 +139,11 @@ def main() -> None:
         help="latest issue date (inclusive)",
     )
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="print all script parameters before exporting",
+    )
+    parser.add_argument(
         "output",
         nargs="?",
         default=str(DEFAULT_OUT),
@@ -139,11 +151,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not DB_PATH.exists():
-        print(f"Database not found: {DB_PATH}", file=sys.stderr)
+    if args.debug:
+        print("Debug — script parameters:")
+        print(f"  db_path:     {args.db_path}")
+        print(f"  date_from:   {args.date_from}")
+        print(f"  date_to:     {args.date_to}")
+        print(f"  output:      {args.output}")
+
+    db_path = Path(args.db_path)
+    if not db_path.exists():
+        print(f"Database not found: {db_path}", file=sys.stderr)
         sys.exit(1)
 
-    invoices = fetch_invoices(DB_PATH, date_from=args.date_from, date_to=args.date_to)
+    invoices = fetch_invoices(db_path, date_from=args.date_from, date_to=args.date_to)
     if not invoices:
         print("No invoices found for the given criteria.")
         sys.exit(0)

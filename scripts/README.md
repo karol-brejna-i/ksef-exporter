@@ -18,9 +18,11 @@ pip install -r scripts/requirements.txt
 
 ```bash
 python scripts/export-invoices.py                          # all invoices → data/invoices-export.xlsx
+python scripts/export-invoices.py --db path/to/custom.sqlite
 python scripts/export-invoices.py --from 2026-05-01        # from May 1st onward
 python scripts/export-invoices.py --to 2026-06-30          # up to June 30th
 python scripts/export-invoices.py --from 2026-05-01 --to 2026-06-30 ~/Desktop/maj-czerwiec.xlsx
+python scripts/export-invoices.py --debug                    # print all parameters, then export
 ```
 
 Last updated: 2026-08-10 12:00
