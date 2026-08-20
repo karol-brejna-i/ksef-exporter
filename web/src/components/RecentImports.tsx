@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, fetchSyncRuns, type SyncRun } from "../api/client";
+import { formatInstant } from "../utils/format";
 
 export interface RecentImportsProps {
   token: string;
@@ -35,9 +36,9 @@ function RunDetails({ run }: { run: SyncRun }) {
         <dt>Duration</dt>
         <dd>{durationText(run.durationMs)}</dd>
         <dt>Started</dt>
-        <dd>{run.startedAt ?? "Not started"}</dd>
+        <dd>{run.startedAt ? formatInstant(run.startedAt) : "Not started"}</dd>
         <dt>Completed</dt>
-        <dd>{run.completedAt ?? "Not completed"}</dd>
+        <dd>{run.completedAt ? formatInstant(run.completedAt) : "Not completed"}</dd>
         <dt>Max iterations</dt>
         <dd>{run.maxIterations ?? "Unknown"}</dd>
         <dt>Continuation before</dt>
@@ -150,7 +151,7 @@ export function RecentImports({ token, refreshKey }: RecentImportsProps) {
       <tbody>
         {runs.map((run) => (
           <tr key={run.id}>
-            <td>{new Date(run.requestedAt).toLocaleString()}</td>
+            <td>{formatInstant(run.requestedAt)}</td>
             <td>
               {run.windowFrom} – {run.windowTo}
             </td>

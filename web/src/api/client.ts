@@ -29,9 +29,9 @@ export interface Invoice {
   currency: string;
   categoryId: number | null;
   categorizationConfidence: CategorizationConfidence;
-  createdAt: string;
+  createdAt: string; // ISO-8601 UTC instant (YYYY-MM-DDTHH:MM:SS.sssZ)
   itemCount: number;
-  itemsExtractedAt: string | null;
+  itemsExtractedAt: string | null; // ISO-8601 UTC instant (YYYY-MM-DDTHH:MM:SS.sssZ)
 }
 
 export interface InvoiceItem {
@@ -67,9 +67,9 @@ export type SyncRunStatus = "running" | "success" | "error";
 
 export interface SyncRun {
   id: number;
-  requestedAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
+  requestedAt: string; // ISO-8601 UTC instant (YYYY-MM-DDTHH:MM:SS.sssZ)
+  startedAt: string | null; // ISO-8601 UTC instant (YYYY-MM-DDTHH:MM:SS.sssZ)
+  completedAt: string | null; // ISO-8601 UTC instant (YYYY-MM-DDTHH:MM:SS.sssZ)
   durationMs: number | null;
   windowFrom: string;
   windowTo: string;

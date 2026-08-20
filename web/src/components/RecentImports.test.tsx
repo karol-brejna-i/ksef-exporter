@@ -5,6 +5,7 @@ import { RecentImports } from "./RecentImports";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("RecentImports", () => {
@@ -230,5 +231,55 @@ describe("RecentImports", () => {
     // Should display "Not reached" for null counts
     const notReachedTexts = screen.getAllByText("Not reached");
     expect(notReachedTexts.length).toBeGreaterThan(0);
+  });
+
+  it("formats requestedAt in the user's local timezone (regression for Defect A)", async () => {
+    // Europe/Warsaw is UTC+02:00 in August, so a correct render is two hours
+    // ahead of the UTC wall clock. The old backend sent '2026-08-10 15:35:01',
+    // which V8 reads as *local* time, rendering 15:35 instead of 17:35.
+    vi.stubEnv("TZ", "Europe/Warsaw");
+
+    vi.spyOn(apiClient, "fetchSyncRuns").mockResolvedValue({
+      runs: [
+        {
+          id: 1,
+          requestedAt: "2026-08-10T15:35:01.000Z",
+          startedAt: null,
+          completedAt: null,
+          durationMs: null,
+          windowFrom: "2026-08-01",
+          windowTo: "2026-08-31",
+          status: "running",
+          invoiceCount: null,
+          errorMessage: null,
+          continuationBefore: null,
+          continuationAfter: null,
+          fetchedCount: null,
+          insertedCount: null,
+          duplicateCount: null,
+          categorizedCount: null,
+          needsReviewCount: null,
+          hasMore: null,
+          maxIterations: 1,
+          errorType: null,
+          errorCode: null,
+          httpStatus: null,
+          retryAfterSeconds: null,
+          itemsInsertedCount: null,
+          itemsFailedCount: null,
+        },
+      ],
+    });
+
+    render(<RecentImports token="jwt-token" refreshKey={0} />);
+
+    await screen.findByText("In progress…");
+    const rendered = screen.getByRole("table").textContent ?? "";
+
+    // Matched loosely because toLocaleString follows the ambient locale: 24-hour
+    // locales render "17:35:01", 12-hour ones "5:35:01 PM".
+    expect(rendered).toMatch(/(?:17|5):35:01/);
+    expect(rendered).not.toMatch(/(?:15|3):35:01/);
+    expect(rendered).not.toContain("2026-08-10T15:35:01.000Z");
   });
 });

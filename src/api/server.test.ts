@@ -490,6 +490,81 @@ describe("API server", () => {
       expect(getClient).not.toHaveBeenCalled();
     });
 
+    it("rejects windowFrom with an impossible month", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2026-13-01", windowTo: "2026-12-31" },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(getClient).not.toHaveBeenCalled();
+    });
+
+    it("rejects windowFrom in wrong format", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "10/08/2026", windowTo: "2026-08-31" },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(getClient).not.toHaveBeenCalled();
+    });
+
+    it("rejects windowFrom with an impossible calendar day", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2026-02-30", windowTo: "2026-03-31" },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(getClient).not.toHaveBeenCalled();
+    });
+
+    it("rejects a reversed window where windowFrom is after windowTo", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2026-08-31", windowTo: "2026-08-01" },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(getClient).not.toHaveBeenCalled();
+    });
+
+    it("accepts a valid window and returns success", async () => {
+      sync.mockResolvedValueOnce({
+        invoices: [],
+        hasMore: false,
+        diagnostics: EMPTY_DIAGNOSTICS,
+      });
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(sync).toHaveBeenCalled();
+    });
+
     it("records a successful sync run", async () => {
       sync.mockResolvedValueOnce({
         invoices: [{ id: 1 }],

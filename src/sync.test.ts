@@ -550,13 +550,15 @@ describe("syncPurchaseInvoices", () => {
     sqlite.close();
   });
 
-  it("reports hasMore as false once the continuation point reaches windowTo", async () => {
+  it("reports hasMore as false once the continuation point passes the end of windowTo", async () => {
     const { db, sqlite } = createDb(":memory:");
     await seedCategorizationRules(db);
 
     const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
       invoices: [],
-      continuationPoints: { Subject2: "2025-01-31" },
+      // Past the exclusive end of the window (2025-02-01T00:00Z), so the whole
+      // window has been covered.
+      continuationPoints: { Subject2: "2025-02-01T00:00:00+00:00" },
       referenceNumbers: ["ref-1"],
     });
 
@@ -568,6 +570,156 @@ describe("syncPurchaseInvoices", () => {
     );
 
     expect(result.hasMore).toBe(false);
+
+    sqlite.close();
+  });
+
+  it("regression, Defect C: reports hasMore for a point on the final day of the window", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2026-08-31T05:00:00+00:00" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices },
+    );
+
+    // Lexicographically the instant sorts after the bare date, which used to
+    // report the import complete while the rest of the 31st went unimported.
+    expect("2026-08-31T05:00:00+00:00" < "2026-08-31").toBe(false);
+    expect(result.hasMore).toBe(true);
+
+    sqlite.close();
+  });
+
+  it("regression, Defect C: never rewinds the high-water mark to an earlier instant", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // '+02:00' sorts above '+00:00' because '0' < '2', yet it is two hours
+    // earlier. String order would have persisted the earlier instant.
+    const stored = "2026-08-10T15:32:59.989017+00:00";
+    const fetched = "2026-08-10T15:32:59.989017+02:00";
+    expect(fetched > stored).toBe(true);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: fetched },
+      referenceNumbers: ["ref-1"],
+    });
+
+    await setContinuationPoint(db, "Subject2", stored);
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices },
+    );
+
+    expect(await getContinuationPoint(db, "Subject2")).toBe(stored);
+    expect(result.diagnostics.continuationAfter).toBe(stored);
+
+    sqlite.close();
+  });
+
+  it("regression, Defect B: applies a stored point that falls on the window's final day", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    let capturedContinuationPoints: unknown;
+    const warn = vi.fn();
+
+    const fetchInvoices = async (
+      _client: unknown,
+      opts: { continuationPoints: unknown },
+    ): Promise<FetchPurchaseInvoicesResult> => {
+      capturedContinuationPoints = opts.continuationPoints;
+      return {
+        invoices: [],
+        continuationPoints: { Subject2: "2026-08-10T18:00:00+00:00" },
+        referenceNumbers: ["ref-1"],
+      };
+    };
+
+    const stored = "2026-08-10T15:32:59.989017+00:00";
+    await setContinuationPoint(db, "Subject2", stored);
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-10" },
+      { fetchInvoices, logger: { info: () => {}, warn } },
+    );
+
+    // The stored instant shares windowTo's prefix and is longer, so `<= windowTo`
+    // used to reject it and re-download the whole window against a 16/min cap.
+    expect(stored <= "2026-08-10").toBe(false);
+    expect(capturedContinuationPoints).toEqual({ Subject2: stored });
+    expect(warn).not.toHaveBeenCalledWith("sync.continuation.conflict", expect.anything());
+
+    sqlite.close();
+  });
+
+  it("falls back to the requested window when the stored point cannot be parsed", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    let capturedContinuationPoints: unknown;
+    const warn = vi.fn();
+
+    const fetchInvoices = async (
+      _client: unknown,
+      opts: { continuationPoints: unknown },
+    ): Promise<FetchPurchaseInvoicesResult> => {
+      capturedContinuationPoints = opts.continuationPoints;
+      return {
+        invoices: [],
+        continuationPoints: { Subject2: "2026-08-31T00:00:00+00:00" },
+        referenceNumbers: ["ref-1"],
+      };
+    };
+
+    await setContinuationPoint(db, "Subject2", "not-a-timestamp");
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices, logger: { info: () => {}, warn } },
+    );
+
+    expect(capturedContinuationPoints).toEqual({});
+    expect(warn).toHaveBeenCalledWith("sync.continuation.unparseable", expect.anything());
+
+    sqlite.close();
+  });
+
+  it("rejects a window bound that is not a calendar date", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    await expect(
+      syncPurchaseInvoices(
+        db,
+        fakeClient(),
+        { windowFrom: "2026-02-30", windowTo: "2026-03-31" },
+        {
+          fetchInvoices: async () => ({
+            invoices: [],
+            continuationPoints: {},
+            referenceNumbers: [],
+          }),
+        },
+      ),
+    ).rejects.toThrow(TypeError);
 
     sqlite.close();
   });

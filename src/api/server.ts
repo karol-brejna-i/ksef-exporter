@@ -24,6 +24,7 @@ import {
 import { getContinuationPoint } from "../db/sync-state.js";
 import { classifyKsefError } from "../ksef/rate-limit.js";
 import { syncPurchaseInvoices } from "../sync.js";
+import { isIsoDate } from "../time.js";
 import { verifyCredentials } from "./auth.js";
 
 declare module "fastify" {
@@ -53,10 +54,22 @@ const loginBodySchema = z.object({
   password: z.string().min(1),
 });
 
-const syncBodySchema = z.object({
-  windowFrom: z.string().min(1),
-  windowTo: z.string().min(1),
-});
+const syncBodySchema = z
+  .object({
+    windowFrom: z
+      .string()
+      .min(1)
+      .refine(isIsoDate, "windowFrom must be a valid date formatted as YYYY-MM-DD"),
+    windowTo: z
+      .string()
+      .min(1)
+      .refine(isIsoDate, "windowTo must be a valid date formatted as YYYY-MM-DD"),
+  })
+  // String comparison is correct here and only here: both are zero-padded civil
+  // dates of identical shape, so lexicographic order is calendar order.
+  .refine((data) => data.windowFrom <= data.windowTo, {
+    message: "windowFrom must not be after windowTo",
+  });
 
 const invoiceQuerySchema = z.object({
   month: z

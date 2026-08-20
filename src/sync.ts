@@ -12,6 +12,12 @@ import { listRules } from "./db/rules.js";
 import { getContinuationPoint, setContinuationPoint } from "./db/sync-state.js";
 import type { InvoiceItemRecord } from "./ksef/invoice-parser.js";
 import { fetchPurchaseInvoices } from "./ksef/invoices.js";
+import {
+  assertIsoDate,
+  continuationPointToEpochMs,
+  dateEndExclusiveMs,
+  dateStartMs,
+} from "./time.js";
 
 /** KSeF's buyer role (see design/SPEC.md §3); Parkowa only pulls its purchases. */
 const SUBJECT_TYPE = "Subject2";
@@ -37,12 +43,12 @@ export interface SyncPurchaseInvoicesResult {
   diagnostics: SyncDiagnostics;
   /**
    * Heuristic: true when the new continuation point (KSeF's high-water mark)
-   * hasn't reached `windowTo` yet, meaning more invoices are likely still
-   * available in this window. KSeF's incremental workflow doesn't expose an
-   * exact "isTruncated" flag through this aggregate result, so this is a
-   * string comparison against the requested window end -- always safe to
-   * act on (calling sync again just resumes from the saved continuation
-   * point), but can occasionally under/over-report right at a day boundary.
+   * hasn't passed the end of `windowTo` yet, meaning more invoices are likely
+   * still available in this window. KSeF's incremental workflow doesn't expose
+   * an exact "isTruncated" flag through this aggregate result, so this compares
+   * the point's instant against the exclusive end of the window -- always safe
+   * to act on (calling sync again just resumes from the saved continuation
+   * point), but can over-report on the window's final day.
    */
   hasMore: boolean;
 }
@@ -79,11 +85,37 @@ export interface SyncLogger {
 
 const noopLogger: SyncLogger = { info: () => {} };
 
-/** Both values are KSeF `PermanentStorage` ISO-8601 timestamps, so string order is chronological. */
-function laterContinuationPoint(a: string | null, b: string | null): string | null {
+/**
+ * Continuation points are opaque KSeF tokens, so an unrecognised shape must not
+ * abort a sync that has already persisted invoices; the caller treats `null` as
+ * "cannot reason about this one" and falls back to the requested window.
+ */
+function continuationPointMs(point: string | null, logger: SyncLogger): number | null {
+  if (point === null) return null;
+  try {
+    return continuationPointToEpochMs(point);
+  } catch {
+    logger.warn?.("sync.continuation.unparseable", { continuationPoint: point });
+    return null;
+  }
+}
+
+/** Picks the chronologically later point. Never compare these as strings: an
+ * offset of `+02:00` sorts above `+00:00` yet is two hours earlier. */
+function laterContinuationPoint(
+  a: string | null,
+  b: string | null,
+  logger: SyncLogger,
+): string | null {
   if (a === null) return b;
   if (b === null) return a;
-  return a >= b ? a : b;
+
+  const aMs = continuationPointMs(a, logger);
+  const bMs = continuationPointMs(b, logger);
+  if (aMs === null) return b;
+  if (bMs === null) return a;
+
+  return aMs >= bMs ? a : b;
 }
 
 export interface SyncPurchaseInvoicesDeps {
@@ -127,10 +159,19 @@ export async function syncPurchaseInvoices(
   // range and be rejected before any request is sent; a point before windowFrom
   // is stale for this window and must not silently expand the fetch into a
   // range the caller did not request.
+  //
+  // The bounds are civil dates and the stored point is an instant, so the
+  // comparison is made numerically and against the *exclusive* start of the day
+  // after windowTo -- a lexicographic `<= windowTo` discards every point on the
+  // window's final day.
+  const windowFromMs = dateStartMs(assertIsoDate(options.windowFrom));
+  const windowEndExclusiveMs = dateEndExclusiveMs(assertIsoDate(options.windowTo));
+  const storedContinuationMs = continuationPointMs(storedContinuationPoint ?? null, logger);
   const appliedContinuationPoint =
     storedContinuationPoint != null &&
-    storedContinuationPoint >= options.windowFrom &&
-    storedContinuationPoint <= options.windowTo
+    storedContinuationMs !== null &&
+    storedContinuationMs >= windowFromMs &&
+    storedContinuationMs < windowEndExclusiveMs
       ? storedContinuationPoint
       : null;
   const continuationPoints: ContinuationPoints =
@@ -154,7 +195,10 @@ export async function syncPurchaseInvoices(
     continuationApplied: appliedContinuationPoint !== null,
     // True when the continuation point starts the query later than requested,
     // i.e. invoices in [windowFrom, effectiveFrom) are deliberately not fetched.
-    windowStartSkipped: effectiveFrom > options.windowFrom,
+    windowStartSkipped:
+      storedContinuationMs !== null &&
+      appliedContinuationPoint !== null &&
+      storedContinuationMs > windowFromMs,
     maxIterations,
   });
   const fetchStartedAt = now();
@@ -284,9 +328,11 @@ export async function syncPurchaseInvoices(
   const persistedContinuationPoint = laterContinuationPoint(
     storedContinuationPoint ?? null,
     newContinuationPoint ?? null,
+    logger,
   );
   await setContinuationPoint(db, SUBJECT_TYPE, persistedContinuationPoint);
-  const hasMore = newContinuationPoint !== undefined && newContinuationPoint < options.windowTo;
+  const newContinuationMs = continuationPointMs(newContinuationPoint ?? null, logger);
+  const hasMore = newContinuationMs !== null && newContinuationMs < windowEndExclusiveMs;
   const needsReviewCount = invoices.filter(
     (invoice) => invoice.categorizationConfidence === "needs_review",
   ).length;
