@@ -121,11 +121,16 @@ export async function syncPurchaseInvoices(
   const maxIterations = options.maxIterations ?? 1;
 
   const storedContinuationPoint = await getContinuationPoint(db, SUBJECT_TYPE);
-  // The SDK queries `from: continuationPoint ?? windowFrom`, so a stored point
-  // past windowTo (backfilling an earlier period) would build an invalid
-  // `from > to` range and be rejected before any request is sent.
+  // The SDK queries `from: continuationPoint ?? windowFrom`, so the stored point
+  // is only applied when it lies inside the requested window. A point past
+  // windowTo (backfilling an earlier period) would build an invalid `from > to`
+  // range and be rejected before any request is sent; a point before windowFrom
+  // is stale for this window and must not silently expand the fetch into a
+  // range the caller did not request.
   const appliedContinuationPoint =
-    storedContinuationPoint != null && storedContinuationPoint <= options.windowTo
+    storedContinuationPoint != null &&
+    storedContinuationPoint >= options.windowFrom &&
+    storedContinuationPoint <= options.windowTo
       ? storedContinuationPoint
       : null;
   const continuationPoints: ContinuationPoints =
@@ -184,8 +189,16 @@ export async function syncPurchaseInvoices(
     const row = await insertKsefInvoiceIfNotExists(db, invoice);
     if (existing) {
       duplicateCount++;
+      logger.info("sync.persist.duplicate", {
+        ksefNumber: invoice.ksefNumber,
+        invoiceNumber: invoice.invoiceNumber,
+      });
     } else {
       insertedCount++;
+      logger.info("sync.persist.inserted", {
+        ksefNumber: invoice.ksefNumber,
+        invoiceNumber: invoice.invoiceNumber,
+      });
     }
 
     // A newly inserted row always has items_extracted_at NULL, and a re-synced

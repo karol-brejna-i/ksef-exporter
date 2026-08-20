@@ -162,6 +162,70 @@ describe("syncPurchaseInvoices", () => {
     sqlite.close();
   });
 
+  it("logs each invoice that is inserted", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const invoiceRecord = record();
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [invoiceRecord],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+    const info = vi.fn();
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices, logger: { info } },
+    );
+
+    expect(info).toHaveBeenCalledWith(
+      "sync.persist.inserted",
+      expect.objectContaining({
+        ksefNumber: invoiceRecord.ksefNumber,
+        invoiceNumber: invoiceRecord.invoiceNumber,
+      }),
+    );
+
+    sqlite.close();
+  });
+
+  it("logs each invoice that was fetched but not inserted because it already exists", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const invoiceRecord = record();
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [invoiceRecord],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    const info = vi.fn();
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices, logger: { info } },
+    );
+
+    expect(info).toHaveBeenCalledWith(
+      "sync.persist.duplicate",
+      expect.objectContaining({ ksefNumber: invoiceRecord.ksefNumber }),
+    );
+
+    sqlite.close();
+  });
+
   it("persists the updated continuation point for the next sync", async () => {
     const { db, sqlite } = createDb(":memory:");
     await seedCategorizationRules(db);
@@ -203,7 +267,7 @@ describe("syncPurchaseInvoices", () => {
       };
     }) as unknown as typeof import("./ksef/invoices.js").fetchPurchaseInvoices;
 
-    await setContinuationPoint(db, "Subject2", "2025-01-31T00:00:00Z");
+    await setContinuationPoint(db, "Subject2", "2025-02-10T00:00:00Z");
 
     await syncPurchaseInvoices(
       db,
@@ -212,7 +276,98 @@ describe("syncPurchaseInvoices", () => {
       { fetchInvoices },
     );
 
-    expect(capturedContinuationPoints).toEqual({ Subject2: "2025-01-31T00:00:00Z" });
+    expect(capturedContinuationPoints).toEqual({ Subject2: "2025-02-10T00:00:00Z" });
+
+    sqlite.close();
+  });
+
+  it("ignores a continuation point earlier than windowFrom so the requested window starts at windowFrom", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    let capturedContinuationPoints: unknown;
+    const fetchInvoices = (async (
+      _client: unknown,
+      opts: { continuationPoints: unknown },
+    ): Promise<FetchPurchaseInvoicesResult> => {
+      capturedContinuationPoints = opts.continuationPoints;
+      return {
+        invoices: [],
+        continuationPoints: { Subject2: "2026-02-28T00:00:00+00:00" },
+        referenceNumbers: [],
+      };
+    }) as unknown as typeof import("./ksef/invoices.js").fetchPurchaseInvoices;
+    const warn = vi.fn();
+
+    await setContinuationPoint(db, "Subject2", "2026-01-15T00:00:00+00:00");
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-02-01", windowTo: "2026-02-28" },
+      { fetchInvoices, logger: { info: vi.fn(), warn } },
+    );
+
+    expect(capturedContinuationPoints).toEqual({});
+    expect(warn).toHaveBeenCalledWith(
+      "sync.continuation.conflict",
+      expect.objectContaining({ effectiveFrom: "2026-02-01" }),
+    );
+    // Monotonic: the newer fetched high-water mark is kept.
+    expect(await getContinuationPoint(db, "Subject2")).toBe("2026-02-28T00:00:00+00:00");
+
+    sqlite.close();
+  });
+
+  it("does not backfill a gap day between two non-overlapping import windows", async () => {
+    const { db, sqlite } = createDb(":memory:");
+
+    const universe = [
+      record({ ksefNumber: "TEST-08-01", issueDate: "2026-08-01" }),
+      record({ ksefNumber: "TEST-08-02", issueDate: "2026-08-02" }),
+      record({ ksefNumber: "TEST-08-03", issueDate: "2026-08-03" }), // unrequested gap day
+      record({ ksefNumber: "TEST-08-04", issueDate: "2026-08-04" }),
+      record({ ksefNumber: "TEST-08-05", issueDate: "2026-08-05" }),
+      record({ ksefNumber: "TEST-08-06", issueDate: "2026-08-06" }),
+      record({ ksefNumber: "TEST-08-07", issueDate: "2026-08-07" }),
+    ];
+
+    const fetchInvoices = (async (
+      _client: unknown,
+      opts: { windowFrom: string; windowTo: string; continuationPoints: { Subject2?: string } },
+    ): Promise<FetchPurchaseInvoicesResult> => {
+      const from = opts.continuationPoints.Subject2 ?? opts.windowFrom;
+      const invoices = universe.filter(
+        (i) => i.issueDate >= from.slice(0, 10) && i.issueDate <= opts.windowTo,
+      );
+      const nextDay = new Date(`${opts.windowTo}T00:00:00Z`);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      return {
+        invoices,
+        continuationPoints: { Subject2: nextDay.toISOString() },
+        referenceNumbers: [],
+      };
+    }) as unknown as typeof import("./ksef/invoices.js").fetchPurchaseInvoices;
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-02" },
+      { fetchInvoices },
+    );
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-04", windowTo: "2026-08-07" },
+      { fetchInvoices },
+    );
+
+    // The gap day (Aug 3) was never requested in either window, and the stored
+    // HWM from import 1 lies before import 2's windowFrom, so it must not be
+    // backfilled.
+    expect(await getInvoiceByKsefNumber(db, "TEST-08-03")).toBeUndefined();
+    expect(await getInvoiceByKsefNumber(db, "TEST-08-04")).toBeDefined();
+    expect(await getContinuationPoint(db, "Subject2")).toBe("2026-08-08T00:00:00.000Z");
 
     sqlite.close();
   });

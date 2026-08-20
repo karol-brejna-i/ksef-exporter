@@ -1,6 +1,6 @@
 # Sync failure analysis: continuation point vs. requested window
 
-**Last updated:** 2026-08-10 18:13
+**Last updated:** 2026-08-20 08:49
 **Status:** implemented — see §3 for the shipped behavior.
 
 
@@ -79,9 +79,9 @@ This is a user-input/state conflict, not an internal error, but it is reported a
 
 Implemented in `src/sync.ts` and `src/api/server.ts`:
 
-1. **Drop the stored point only when it is later than `windowTo`.** That is the one case where it
-   cannot possibly be a continuation *within* the requested window, so the call is treated as a
-   backfill and queries `[windowFrom, windowTo]` directly.
+1. **Drop the stored point whenever it lies outside the requested window** — earlier than
+   `windowFrom` or later than `windowTo`. Outside the window it cannot be a continuation *within*
+   the requested range, so the call queries `[windowFrom, windowTo]` directly.
 2. **Persist `max(stored, fetched)`** — the high-water mark never moves backwards. Without this, a
    July backfill rewinds the incremental cursor and the next current-month sync re-downloads
    August. Dedupe by KSeF number would absorb the duplicates, but it burns the tight
@@ -90,17 +90,18 @@ Implemented in `src/sync.ts` and `src/api/server.ts`:
 3. **Log the effective query start** and warn on the conflict (see §4), so neither branch is silent.
 4. **Map `KsefValidationError` to 400** with the SDK message, instead of 500 `"internal error"`.
 
-### 3.1 Why not "drop the point whenever it falls outside the window"
+### 3.1 Why the point is dropped outside the window
 
-That was the first idea, and it is wrong in both directions:
+The original fix kept the point whenever `stored <= windowFrom`, on the theory that starting from
+the stored point "closes the gap" between the two. That is only correct for the harmless boundary
+case (HWM at 2025-01-31 23:59 with a February window) — and it silently expands the fetch far
+beyond the requested range whenever the stored point is materially stale, re-reading months the
+caller did not ask for and burning the tight export quota. The point is therefore now dropped
+whenever it lies outside the window:
 
-- `stored <= windowFrom` (e.g. HWM at 2025-01-31, window February): the point *should* be used.
-  Starting at the stored point rather than `windowFrom` closes the gap between the two.
-- `windowFrom < stored <= windowTo` is genuinely ambiguous. It is both the backfill-intent case
-  from §2.1 *and* the normal "click Import again to continue" pagination flow — an import of the
-  current month with the HWM sitting mid-month. Since the two are indistinguishable without an
-  explicit mode flag, the point is kept (pagination wins) and the skipped range is surfaced in the
-  log via `windowStartSkipped`.
+- `stored < windowFrom` → start at `windowFrom` (the caller's window wins over a stale cursor).
+- `windowFrom <= stored <= windowTo` → use the point (mid-window "click Import again" pagination).
+- `stored > windowTo` → start at `windowFrom` (backfill).
 
 ### Alternative not taken
 
