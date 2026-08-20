@@ -712,6 +712,29 @@ describe("API server", () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({ runs: [] });
     });
+
+    it("renders requestedAt as ISO-8601 UTC string with T separator", async () => {
+      const token = await login();
+
+      await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      });
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/sync/runs",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { runs: Array<{ requestedAt: string }> };
+      expect(body.runs).toHaveLength(1);
+      // Must be ISO-8601 UTC with T separator, not the old space-separated format
+      expect(body.runs[0]?.requestedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    });
   });
 
   describe("PATCH /invoices/:id/category", () => {

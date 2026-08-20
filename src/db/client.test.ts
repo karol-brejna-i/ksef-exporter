@@ -126,5 +126,54 @@ describe("createDb", () => {
         sqlite.close();
       }
     });
+
+    it("keeps child rows when a migration rebuilds a parent table", () => {
+      const base = mkdtempSync(join(tmpdir(), "ksef-exporter-db-test-"));
+      tempDir = base;
+      const dbPath = join(base, "cascade.sqlite");
+      const migrationsDir = fileURLToPath(new URL("../../drizzle/migrations", import.meta.url));
+      const journal = JSON.parse(
+        readFileSync(join(migrationsDir, "meta", "_journal.json"), "utf8"),
+      ) as { entries: Array<{ tag: string; when: number }> };
+
+      // Stop just before the constraint migration, which rebuilds `invoices` by
+      // dropping it. `invoice_items` references it ON DELETE CASCADE, so with
+      // enforcement left on that DROP silently empties the child table.
+      const upTo = journal.entries.findIndex((entry) => entry.tag.startsWith("0008_"));
+      expect(upTo).toBeGreaterThan(0);
+
+      const legacy = new Database(dbPath);
+      legacy.exec(
+        'CREATE TABLE "__drizzle_migrations" (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)',
+      );
+      for (const entry of journal.entries.slice(0, upTo)) {
+        const migration = readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8");
+        for (const statement of migration.split("--> statement-breakpoint")) {
+          if (statement.trim()) legacy.exec(statement);
+        }
+        legacy
+          .prepare('INSERT INTO "__drizzle_migrations" (hash, created_at) VALUES (?, ?)')
+          .run(createHash("sha256").update(migration).digest("hex"), entry.when);
+      }
+      legacy
+        .prepare(
+          "INSERT INTO invoices (id, source, invoice_number, seller_name, issue_date, gross_total, currency, created_at) VALUES (1, 'ksef', 'FV/1', 'Seller', '2026-08-01', 100.0, 'PLN', 1786376101000)",
+        )
+        .run();
+      legacy
+        .prepare("INSERT INTO invoice_items (invoice_id, ordinal, name) VALUES (1, 1, 'Line')")
+        .run();
+      legacy.close();
+
+      const { sqlite } = createDb(dbPath);
+      try {
+        expect(sqlite.prepare("SELECT count(*) AS count FROM invoice_items").get()).toEqual({
+          count: 1,
+        });
+        expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+      } finally {
+        sqlite.close();
+      }
+    });
   });
 });

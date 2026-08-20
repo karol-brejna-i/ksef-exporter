@@ -111,6 +111,17 @@ describe("invoices repository", () => {
     await expect(updateInvoiceCategory(db, 999, category.id, "matched")).rejects.toThrow();
   });
 
+  it("returns createdAt as a Date instance with epoch-milliseconds precision", async () => {
+    const inserted = await insertKsefInvoiceIfNotExists(db, SAMPLE_KSEF_INVOICE);
+
+    expect(inserted.createdAt).toBeInstanceOf(Date);
+
+    // Epoch ms must be between 2000-01-01 and 2100-01-01 (per schema CHECK constraint)
+    const epochMs = inserted.createdAt.getTime();
+    expect(epochMs).toBeGreaterThanOrEqual(946684800000); // 2000-01-01
+    expect(epochMs).toBeLessThanOrEqual(4102444800000); // 2100-01-01
+  });
+
   it("filters listed invoices by month", async () => {
     await insertKsefInvoiceIfNotExists(db, SAMPLE_KSEF_INVOICE);
     await insertKsefInvoiceIfNotExists(db, {
@@ -123,6 +134,62 @@ describe("invoices repository", () => {
 
     expect(januaryOnly).toHaveLength(1);
     expect(januaryOnly[0]?.issueDate).toBe("2025-01-15");
+  });
+
+  it("month filter excludes invoices from the previous and next months", async () => {
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20250131-123456789012-01",
+      issueDate: "2025-01-31",
+    });
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20250201-123456789012-01",
+      issueDate: "2025-02-01",
+    });
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20250228-123456789012-01",
+      issueDate: "2025-02-28",
+    });
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20250301-123456789012-01",
+      issueDate: "2025-03-01",
+    });
+
+    const februaryOnly = await listInvoices(db, { month: "2025-02" });
+
+    expect(februaryOnly).toHaveLength(2);
+    expect(februaryOnly.map((i) => i.issueDate).sort()).toEqual(["2025-02-01", "2025-02-28"]);
+  });
+
+  it("month filter handles December correctly, rolling over to next year", async () => {
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20251130-123456789012-01",
+      issueDate: "2025-11-30",
+    });
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20251201-123456789012-01",
+      issueDate: "2025-12-01",
+    });
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20251231-123456789012-01",
+      issueDate: "2025-12-31",
+    });
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20260101-123456789012-01",
+      issueDate: "2026-01-01",
+    });
+
+    const decemberOnly = await listInvoices(db, { month: "2025-12" });
+
+    expect(decemberOnly).toHaveLength(2);
+    expect(decemberOnly.map((i) => i.issueDate).sort()).toEqual(["2025-12-01", "2025-12-31"]);
   });
 
   it("filters listed invoices by categoryId", async () => {

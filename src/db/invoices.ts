@@ -1,4 +1,4 @@
-import { and, eq, like } from "drizzle-orm";
+import { and, eq, gte, lt } from "drizzle-orm";
 import type { Db } from "./client.js";
 import { invoices } from "./schema.js";
 
@@ -18,10 +18,10 @@ export interface InvoiceRow {
   currency: string;
   rawXml: string | null;
   /** NULL = line-item extraction never attempted; see design/INVOICE_ITEMS_PLAN.md §6.3. */
-  itemsExtractedAt: string | null;
+  itemsExtractedAt: Date | null;
   categoryId: number | null;
   categorizationConfidence: CategorizationConfidence;
-  createdAt: string;
+  createdAt: Date;
 }
 
 export interface NewKsefInvoice {
@@ -103,7 +103,14 @@ export interface ListInvoicesFilter {
 export async function listInvoices(db: Db, filter: ListInvoicesFilter = {}): Promise<InvoiceRow[]> {
   const conditions = [];
   if (filter.month) {
-    conditions.push(like(invoices.issueDate, `${filter.month}%`));
+    // String comparison is correct here: both sides are zero-padded YYYY-MM-DD civil dates of identical shape.
+    const [year, month] = filter.month.split("-");
+    const nextMonth =
+      month === "12"
+        ? `${Number(year) + 1}-01`
+        : `${year}-${String(Number(month) + 1).padStart(2, "0")}`;
+    conditions.push(gte(invoices.issueDate, `${filter.month}-01`));
+    conditions.push(lt(invoices.issueDate, `${nextMonth}-01`));
   }
   if (filter.categoryId !== undefined) {
     conditions.push(eq(invoices.categoryId, filter.categoryId));

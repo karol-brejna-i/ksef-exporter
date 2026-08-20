@@ -1,5 +1,24 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  check,
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
+
+/**
+ * These are spliced into CHECK constraints as raw SQL. Interpolating plain JS
+ * values instead emits bound `?` parameters, which SQLite rejects in DDL.
+ */
+const ISO_DATE_GLOB = sql.raw("'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'");
+const NIP_GLOB = sql.raw("'[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'");
+/** 2000-01-01 .. 2100-01-01 in epoch ms. Catches a value written in *seconds*,
+ * which is the likeliest regression now that instants are integers. */
+const EPOCH_MS_MIN = sql.raw("946684800000");
+const EPOCH_MS_MAX = sql.raw("4102444800000");
 
 /**
  * Categories used in the UI (per design/SPEC.md §2.6/§4): Media, Zakup
@@ -44,7 +63,7 @@ export const invoices = sqliteTable(
      * the UI distinguish "not extracted yet" from "genuinely has zero items"
      * (FaWiersz is minOccurs=0, so zero items is legal).
      */
-    itemsExtractedAt: text("items_extracted_at"),
+    itemsExtractedAt: integer("items_extracted_at", { mode: "timestamp_ms" }),
     categoryId: integer("category_id").references(() => categories.id),
     /**
      * "matched": a Tier-1 rule confidently assigned the category (SPEC §4).
@@ -55,13 +74,42 @@ export const invoices = sqliteTable(
     })
       .notNull()
       .default("needs_review"),
-    createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (table) => [
     // A KSeF invoice must never be stored twice; manual entries have no
     // KSeF number at all (multiple NULLs are allowed by SQLite's unique
     // index semantics, which is exactly what we want here).
     uniqueIndex("invoices_ksef_number_unique").on(table.ksefNumber),
+    index("invoices_issue_date_idx").on(table.issueDate),
+    check(
+      "invoices_issue_date_iso",
+      sql`${table.issueDate} GLOB ${ISO_DATE_GLOB} AND ${table.issueDate} IS date(${table.issueDate})`,
+    ),
+    check("invoices_source_enum", sql`${table.source} IN ('ksef', 'manual')`),
+    check(
+      "invoices_confidence_enum",
+      sql`${table.categorizationConfidence} IN ('matched', 'needs_review')`,
+    ),
+    check("invoices_currency_iso", sql`${table.currency} GLOB '[A-Z][A-Z][A-Z]'`),
+    check(
+      "invoices_seller_nip_digits",
+      sql`${table.sellerNip} IS NULL OR ${table.sellerNip} GLOB ${NIP_GLOB}`,
+    ),
+    check(
+      "invoices_buyer_nip_digits",
+      sql`${table.buyerNip} IS NULL OR ${table.buyerNip} GLOB ${NIP_GLOB}`,
+    ),
+    check(
+      "invoices_created_at_epoch_ms",
+      sql`${table.createdAt} BETWEEN ${EPOCH_MS_MIN} AND ${EPOCH_MS_MAX}`,
+    ),
+    check(
+      "invoices_items_extracted_at_epoch_ms",
+      sql`${table.itemsExtractedAt} IS NULL OR ${table.itemsExtractedAt} BETWEEN ${EPOCH_MS_MIN} AND ${EPOCH_MS_MAX}`,
+    ),
   ],
 );
 
@@ -121,6 +169,19 @@ export const invoiceItems = sqliteTable(
   (table) => [
     uniqueIndex("invoice_items_invoice_ordinal_unique").on(table.invoiceId, table.ordinal),
     index("invoice_items_invoice_id_idx").on(table.invoiceId),
+    check("invoice_items_ordinal_positive", sql`${table.ordinal} >= 1`),
+    check(
+      "invoice_items_delivery_date_iso",
+      sql`${table.deliveryDate} IS NULL OR (${table.deliveryDate} GLOB ${ISO_DATE_GLOB} AND ${table.deliveryDate} IS date(${table.deliveryDate}))`,
+    ),
+    check(
+      "invoice_items_annex15_bool",
+      sql`${table.annex15} IS NULL OR ${table.annex15} IN (0, 1)`,
+    ),
+    check(
+      "invoice_items_correction_state_bool",
+      sql`${table.correctionStateBefore} IS NULL OR ${table.correctionStateBefore} IN (0, 1)`,
+    ),
   ],
 );
 
@@ -143,6 +204,10 @@ export const categorizationRules = sqliteTable(
     // Prevents duplicate/conflicting rules for the same match condition;
     // corrections update the existing rule instead (SPEC §4, Phase 5).
     uniqueIndex("categorization_rules_match_unique").on(table.matchType, table.matchValue),
+    check(
+      "categorization_rules_match_type_enum",
+      sql`${table.matchType} IN ('seller_nip', 'seller_name_contains')`,
+    ),
   ],
 );
 
@@ -162,37 +227,67 @@ export const syncState = sqliteTable("sync_state", {
  * only ever seeing the resulting invoices with no trace of the request
  * that produced them.
  */
-export const syncRuns = sqliteTable("sync_runs", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  requestedAt: text("requested_at").notNull().default(sql`(current_timestamp)`),
-  startedAt: text("started_at"),
-  completedAt: text("completed_at"),
-  durationMs: integer("duration_ms"),
-  windowFrom: text("window_from").notNull(),
-  windowTo: text("window_to").notNull(),
-  /** "running" until the sync call resolves, then "success" or "error". */
-  status: text("status", { enum: ["running", "success", "error"] })
-    .notNull()
-    .default("running"),
-  /** Set once `status` is "success". */
-  invoiceCount: integer("invoice_count"),
-  /** Set once `status` is "error". */
-  errorMessage: text("error_message"),
-  continuationBefore: text("continuation_before"),
-  continuationAfter: text("continuation_after"),
-  fetchedCount: integer("fetched_count"),
-  insertedCount: integer("inserted_count"),
-  duplicateCount: integer("duplicate_count"),
-  categorizedCount: integer("categorized_count"),
-  needsReviewCount: integer("needs_review_count"),
-  hasMore: integer("has_more", { mode: "boolean" }),
-  maxIterations: integer("max_iterations"),
-  errorType: text("error_type"),
-  errorCode: text("error_code"),
-  httpStatus: integer("http_status"),
-  retryAfterSeconds: integer("retry_after_seconds"),
-  /** Items written across the run; NULL on rows predating this workstream. */
-  itemsInsertedCount: integer("items_inserted_count"),
-  /** Invoices whose item extraction failed; the invoice itself is still stored (§6.1). */
-  itemsFailedCount: integer("items_failed_count"),
-});
+export const syncRuns = sqliteTable(
+  "sync_runs",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    requestedAt: integer("requested_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    durationMs: integer("duration_ms"),
+    windowFrom: text("window_from").notNull(),
+    windowTo: text("window_to").notNull(),
+    /** "running" until the sync call resolves, then "success" or "error". */
+    status: text("status", { enum: ["running", "success", "error"] })
+      .notNull()
+      .default("running"),
+    /** Set once `status` is "success". */
+    invoiceCount: integer("invoice_count"),
+    /** Set once `status` is "error". */
+    errorMessage: text("error_message"),
+    continuationBefore: text("continuation_before"),
+    continuationAfter: text("continuation_after"),
+    fetchedCount: integer("fetched_count"),
+    insertedCount: integer("inserted_count"),
+    duplicateCount: integer("duplicate_count"),
+    categorizedCount: integer("categorized_count"),
+    needsReviewCount: integer("needs_review_count"),
+    hasMore: integer("has_more", { mode: "boolean" }),
+    maxIterations: integer("max_iterations"),
+    errorType: text("error_type"),
+    errorCode: text("error_code"),
+    httpStatus: integer("http_status"),
+    retryAfterSeconds: integer("retry_after_seconds"),
+    /** Items written across the run; NULL on rows predating this workstream. */
+    itemsInsertedCount: integer("items_inserted_count"),
+    /** Invoices whose item extraction failed; the invoice itself is still stored (§6.1). */
+    itemsFailedCount: integer("items_failed_count"),
+  },
+  (table) => [
+    check("sync_runs_status_enum", sql`${table.status} IN ('running', 'success', 'error')`),
+    check("sync_runs_has_more_bool", sql`${table.hasMore} IS NULL OR ${table.hasMore} IN (0, 1)`),
+    check(
+      "sync_runs_window_from_iso",
+      sql`${table.windowFrom} GLOB ${ISO_DATE_GLOB} AND ${table.windowFrom} IS date(${table.windowFrom})`,
+    ),
+    check(
+      "sync_runs_window_to_iso",
+      sql`${table.windowTo} GLOB ${ISO_DATE_GLOB} AND ${table.windowTo} IS date(${table.windowTo})`,
+    ),
+    check("sync_runs_window_order", sql`${table.windowFrom} <= ${table.windowTo}`),
+    check(
+      "sync_runs_requested_at_epoch_ms",
+      sql`${table.requestedAt} BETWEEN ${EPOCH_MS_MIN} AND ${EPOCH_MS_MAX}`,
+    ),
+    check(
+      "sync_runs_started_at_epoch_ms",
+      sql`${table.startedAt} IS NULL OR ${table.startedAt} BETWEEN ${EPOCH_MS_MIN} AND ${EPOCH_MS_MAX}`,
+    ),
+    check(
+      "sync_runs_completed_at_epoch_ms",
+      sql`${table.completedAt} IS NULL OR ${table.completedAt} BETWEEN ${EPOCH_MS_MIN} AND ${EPOCH_MS_MAX}`,
+    ),
+  ],
+);

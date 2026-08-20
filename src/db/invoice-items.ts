@@ -103,7 +103,7 @@ export function replaceInvoiceItems(db: Db, invoiceId: number, items: NewInvoice
 
     // Stamp the extraction timestamp
     tx.update(invoices)
-      .set({ itemsExtractedAt: new Date().toISOString() })
+      .set({ itemsExtractedAt: new Date() })
       .where(eq(invoices.id, invoiceId))
       .run();
   });

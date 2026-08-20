@@ -194,7 +194,7 @@ describe("invoice-items repository", () => {
 
     const after = await getInvoiceById(db, invoice.id);
     expect(after?.itemsExtractedAt).not.toBeNull();
-    expect(after?.itemsExtractedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    expect(after?.itemsExtractedAt).toBeInstanceOf(Date);
   });
 
   it("replaceInvoiceItems stamps items_extracted_at even with an empty items array", async () => {
@@ -208,7 +208,7 @@ describe("invoice-items repository", () => {
 
     const after = await getInvoiceById(db, invoice.id);
     expect(after?.itemsExtractedAt).not.toBeNull();
-    expect(after?.itemsExtractedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    expect(after?.itemsExtractedAt).toBeInstanceOf(Date);
   });
 
   it("listInvoiceItems returns empty array for non-existent invoice", async () => {
@@ -266,5 +266,34 @@ describe("invoice-items repository", () => {
     expect(stored.correctionStateBefore).toBe(false);
     expect(stored.annex15).toBe(true);
     expect(stored.gtuCode).toBe("GTU_01");
+  });
+
+  it("itemsExtractedAt round-trips as a Date preserving millisecond precision", async () => {
+    const invoice = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+
+    // Capture a reference timestamp before the write
+    const beforeMs = Date.now();
+
+    replaceInvoiceItems(db, invoice.id, [
+      { invoiceId: invoice.id, ordinal: 1, lineNumber: 1, name: "Item" },
+    ]);
+
+    const afterMs = Date.now();
+    const retrieved = await getInvoiceById(db, invoice.id);
+
+    expect(retrieved?.itemsExtractedAt).toBeInstanceOf(Date);
+    expect(retrieved?.itemsExtractedAt).not.toBeNull();
+
+    if (retrieved?.itemsExtractedAt) {
+      const epochMs = retrieved.itemsExtractedAt.getTime();
+      // Should be in milliseconds (13 digits), not seconds (10 digits)
+      expect(epochMs.toString().length).toBe(13);
+      // Should be between our before/after markers
+      expect(epochMs).toBeGreaterThanOrEqual(beforeMs);
+      expect(epochMs).toBeLessThanOrEqual(afterMs);
+      // Should be in the valid epoch range (2000-01-01 to 2100-01-01)
+      expect(epochMs).toBeGreaterThanOrEqual(946684800000);
+      expect(epochMs).toBeLessThanOrEqual(4102444800000);
+    }
   });
 });

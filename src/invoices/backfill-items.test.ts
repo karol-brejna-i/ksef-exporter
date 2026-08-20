@@ -125,7 +125,7 @@ describe("backfillInvoiceItems", () => {
 
     // Manually stamp items_extracted_at for the first invoice
     await db.run(
-      sql`UPDATE invoices SET items_extracted_at = ${new Date().toISOString()} WHERE id = ${alreadyExtracted.id}`,
+      sql`UPDATE invoices SET items_extracted_at = ${Date.now()} WHERE id = ${alreadyExtracted.id}`,
     );
 
     const notYetExtracted = await insertKsefInvoiceIfNotExists(db, {
@@ -274,7 +274,7 @@ describe("backfillInvoiceItems", () => {
 
     // Manually stamp items_extracted_at and insert an old item
     await db.run(
-      sql`UPDATE invoices SET items_extracted_at = ${new Date().toISOString()} WHERE id = ${invoice.id}`,
+      sql`UPDATE invoices SET items_extracted_at = ${Date.now()} WHERE id = ${invoice.id}`,
     );
 
     await db.insert(invoiceItems).values({
@@ -436,7 +436,7 @@ describe("backfillInvoiceItems", () => {
     const invoiceAfter = await getInvoiceById(db, invoice.id);
 
     expect(invoiceAfter?.itemsExtractedAt).not.toBeNull();
-    expect(invoiceAfter?.itemsExtractedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    expect(invoiceAfter?.itemsExtractedAt).toBeInstanceOf(Date);
   });
 
   it("builds reconciliation report for eligible invoices", async () => {
@@ -458,5 +458,68 @@ describe("backfillInvoiceItems", () => {
     expect(result.reconciliation.eligibleCount).toBeGreaterThan(0);
     expect(result.reconciliation.matchedCount).toBeGreaterThan(0);
     expect(result.reconciliation.mismatches).toHaveLength(0);
+  });
+
+  it("isNull check on itemsExtractedAt still correctly selects never-extracted invoices after migration to Date", async () => {
+    // This test specifically verifies the NULL selection logic is unaffected by
+    // the column type change from TEXT to INTEGER (Date).
+
+    // Insert three invoices: one with NULL, one extracted recently, one extracted long ago
+    const neverExtracted = await insertKsefInvoiceIfNotExists(db, {
+      ksefNumber: "5265877635-20260801-123456789012-01",
+      invoiceNumber: "INV/001/2026",
+      sellerNip: "1234567890",
+      sellerName: "Test Seller",
+      issueDate: "2026-08-01",
+      grossTotal: 123.0,
+      currency: "PLN",
+      rawXml: minimalInvoiceXml(),
+    });
+    // Leave this one NULL by not calling replaceInvoiceItems
+
+    const extractedRecently = await insertKsefInvoiceIfNotExists(db, {
+      ksefNumber: "5265877635-20260802-123456789012-02",
+      invoiceNumber: "INV/002/2026",
+      sellerNip: "1234567890",
+      sellerName: "Test Seller",
+      issueDate: "2026-08-02",
+      grossTotal: 123.0,
+      currency: "PLN",
+      rawXml: minimalInvoiceXml(),
+    });
+    await db.run(
+      sql`UPDATE invoices SET items_extracted_at = ${Date.now()} WHERE id = ${extractedRecently.id}`,
+    );
+
+    const extractedLongAgo = await insertKsefInvoiceIfNotExists(db, {
+      ksefNumber: "5265877635-20260803-123456789012-03",
+      invoiceNumber: "INV/003/2026",
+      sellerNip: "1234567890",
+      sellerName: "Test Seller",
+      issueDate: "2026-08-03",
+      grossTotal: 123.0,
+      currency: "PLN",
+      rawXml: minimalInvoiceXml(),
+    });
+    await db.run(
+      sql`UPDATE invoices SET items_extracted_at = ${946684800000} WHERE id = ${extractedLongAgo.id}`,
+    );
+
+    // Run backfill without force
+    const result = await backfillInvoiceItems(db);
+
+    // Should process only the never-extracted invoice
+    expect(result.totalEligible).toBe(1);
+    expect(result.succeeded).toBe(1);
+
+    // Verify it was the right one
+    const items = await listInvoiceItems(db, neverExtracted.id);
+    expect(items).toHaveLength(1);
+
+    // The other two should have no items written by this backfill
+    const recentItems = await listInvoiceItems(db, extractedRecently.id);
+    const oldItems = await listInvoiceItems(db, extractedLongAgo.id);
+    expect(recentItems).toHaveLength(0);
+    expect(oldItems).toHaveLength(0);
   });
 });

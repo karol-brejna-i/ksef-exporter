@@ -968,7 +968,7 @@ describe("syncPurchaseInvoices", () => {
       { fetchInvoices },
     );
     const stored = await markSyncRunSuccess(db, run.id, {
-      completedAt: "2025-02-01T10:00:01.000Z",
+      completedAt: new Date("2025-02-01T10:00:01.000Z"),
       durationMs: 1000,
       invoiceCount: result.invoices.length,
       hasMore: result.hasMore,

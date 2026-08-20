@@ -60,7 +60,7 @@ def fetch_invoices(db_path: Path, date_from: str | None = None, date_to: str | N
           i.currency,
           c.name AS category_name,
           i.categorization_confidence,
-          i.created_at
+          strftime('%Y-%m-%d %H:%M:%S', i.created_at/1000, 'unixepoch') AS created_at
         FROM invoices i
         LEFT JOIN categories c ON c.id = i.category_id
     """

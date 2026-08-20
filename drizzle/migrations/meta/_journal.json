@@ -29,6 +29,41 @@
       "when": 1786531453114,
       "tag": "0003_light_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787234225908,
+      "tag": "0004_fair_secret_warriors",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1787234232006,
+      "tag": "0005_backfill_instant_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787234670423,
+      "tag": "0006_aberrant_frightful_four",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1787236028593,
+      "tag": "0007_real_toad",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787236241516,
+      "tag": "0008_bent_karnak",
+      "breakpoints": true
     }
   ]
 }

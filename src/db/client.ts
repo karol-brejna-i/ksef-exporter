@@ -30,10 +30,23 @@ export function createDb(path: string): { db: Db; sqlite: Database.Database } {
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("busy_timeout = 5000");
   sqlite.pragma("synchronous = NORMAL");
-  sqlite.pragma("foreign_keys = ON");
 
   const db = drizzle(sqlite, { schema });
+
+  // Foreign keys must be OFF for the duration of the migrations. SQLite emulates
+  // ALTER TABLE by rebuilding into a temp table and dropping the original, and a
+  // DROP TABLE with enforcement on fires ON DELETE CASCADE -- rebuilding
+  // `invoices` would silently empty `invoice_items`. The `PRAGMA foreign_keys=OFF`
+  // that drizzle-kit emits inside the migration file cannot do this itself: the
+  // migrator runs inside a transaction, where the pragma is a no-op.
+  sqlite.pragma("foreign_keys = OFF");
   migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+  sqlite.pragma("foreign_keys = ON");
+
+  const violations = sqlite.pragma("foreign_key_check") as unknown[];
+  if (violations.length > 0) {
+    throw new Error(`Migrations left ${violations.length} foreign key violation(s) in ${path}`);
+  }
 
   return { db, sqlite };
 }

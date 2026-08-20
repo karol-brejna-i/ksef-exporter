@@ -6,9 +6,9 @@ export type SyncRunStatus = "running" | "success" | "error";
 
 export interface SyncRun {
   id: number;
-  requestedAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
+  requestedAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
   durationMs: number | null;
   windowFrom: string;
   windowTo: string;
@@ -37,13 +37,13 @@ export interface SyncRun {
 export interface CreateSyncRunInput {
   windowFrom: string;
   windowTo: string;
-  startedAt?: string;
+  startedAt?: Date;
   continuationBefore?: string | null;
   maxIterations?: number;
 }
 
 export interface SyncRunSuccessDiagnostics {
-  completedAt: string;
+  completedAt: Date;
   durationMs: number;
   invoiceCount: number;
   continuationAfter: string | null;
@@ -64,7 +64,7 @@ export interface SyncRunSuccessDiagnostics {
 }
 
 export interface SyncRunErrorDiagnostics {
-  completedAt: string;
+  completedAt: Date;
   durationMs: number;
   errorMessage: string;
   errorType: string;

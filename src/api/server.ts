@@ -154,7 +154,7 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
     const continuationBefore = await getContinuationPoint(deps.db, "Subject2");
     const run = await createSyncRun(deps.db, {
       ...parsed.data,
-      startedAt: new Date(startedAtMs).toISOString(),
+      startedAt: new Date(startedAtMs),
       continuationBefore: continuationBefore ?? null,
       maxIterations: 1,
     });
@@ -178,7 +178,7 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       const completedAtMs = now();
       const durationMs = completedAtMs - startedAtMs;
       await markSyncRunSuccess(deps.db, run.id, {
-        completedAt: new Date(completedAtMs).toISOString(),
+        completedAt: new Date(completedAtMs),
         durationMs,
         invoiceCount: result.invoices.length,
         continuationAfter: result.diagnostics.continuationAfter,
@@ -207,7 +207,7 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       const durationMs = completedAtMs - startedAtMs;
       const diagnostics = classifyKsefError(error);
       await markSyncRunError(deps.db, run.id, {
-        completedAt: new Date(completedAtMs).toISOString(),
+        completedAt: new Date(completedAtMs),
         durationMs,
         errorMessage: diagnostics.message,
         errorType: diagnostics.errorType,

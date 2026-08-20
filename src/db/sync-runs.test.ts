@@ -21,10 +21,11 @@ describe("sync-runs repository", () => {
   afterEach(() => close());
 
   it("creates a run in 'running' status", async () => {
+    const startedAt = new Date("2025-02-01T10:00:00.000Z");
     const run = await createSyncRun(db, {
       windowFrom: "2025-01-01",
       windowTo: "2025-01-31",
-      startedAt: "2025-02-01T10:00:00.000Z",
+      startedAt,
       continuationBefore: "2025-01-15T00:00:00.000Z",
       maxIterations: 1,
     });
@@ -34,7 +35,7 @@ describe("sync-runs repository", () => {
     expect(run.windowTo).toBe("2025-01-31");
     expect(run.invoiceCount).toBeNull();
     expect(run.errorMessage).toBeNull();
-    expect(run.startedAt).toBe("2025-02-01T10:00:00.000Z");
+    expect(run.startedAt).toEqual(startedAt);
     expect(run.continuationBefore).toBe("2025-01-15T00:00:00.000Z");
     expect(run.maxIterations).toBe(1);
   });
@@ -42,8 +43,9 @@ describe("sync-runs repository", () => {
   it("marks a run as successful with an invoice count", async () => {
     const run = await createSyncRun(db, { windowFrom: "2025-01-01", windowTo: "2025-01-31" });
 
+    const completedAt = new Date("2025-02-01T10:00:02.500Z");
     const updated = await markSyncRunSuccess(db, run.id, {
-      completedAt: "2025-02-01T10:00:02.500Z",
+      completedAt,
       durationMs: 2500,
       invoiceCount: 12,
       continuationAfter: "2025-01-31T00:00:00.000Z",
@@ -61,6 +63,7 @@ describe("sync-runs repository", () => {
     expect(updated.invoiceCount).toBe(12);
     expect(updated.errorMessage).toBeNull();
     expect(updated.durationMs).toBe(2500);
+    expect(updated.completedAt).toEqual(completedAt);
     expect(updated.insertedCount).toBe(10);
     expect(updated.duplicateCount).toBe(2);
     expect(updated.hasMore).toBe(false);
@@ -77,8 +80,9 @@ describe("sync-runs repository", () => {
 
     // ...whereas a successful run that found nothing to extract stores 0, which
     // is what lets the UI tell "no items" from "predates this feature" (§6.3).
+    const completedAt = new Date("2025-02-01T10:00:01.000Z");
     const updated = await markSyncRunSuccess(db, run.id, {
-      completedAt: "2025-02-01T10:00:01.000Z",
+      completedAt,
       durationMs: 1000,
       invoiceCount: 0,
       continuationAfter: null,
@@ -94,13 +98,15 @@ describe("sync-runs repository", () => {
 
     expect(updated.itemsInsertedCount).toBe(0);
     expect(updated.itemsFailedCount).toBe(0);
+    expect(updated.completedAt).toEqual(completedAt);
   });
 
   it("marks a run as failed with an error message", async () => {
     const run = await createSyncRun(db, { windowFrom: "2025-01-01", windowTo: "2025-01-31" });
 
+    const completedAt = new Date("2025-02-01T10:00:01.000Z");
     const updated = await markSyncRunError(db, run.id, {
-      completedAt: "2025-02-01T10:00:01.000Z",
+      completedAt,
       durationMs: 1000,
       errorMessage: "rate limited, retry after 52m",
       errorType: "KsefRateLimitError",
@@ -110,6 +116,7 @@ describe("sync-runs repository", () => {
 
     expect(updated.status).toBe("error");
     expect(updated.errorMessage).toBe("rate limited, retry after 52m");
+    expect(updated.completedAt).toEqual(completedAt);
     expect(updated.invoiceCount).toBeNull();
     expect(updated.errorType).toBe("KsefRateLimitError");
     expect(updated.httpStatus).toBe(429);
@@ -119,7 +126,7 @@ describe("sync-runs repository", () => {
   it("throws when marking a non-existent run", async () => {
     await expect(
       markSyncRunSuccess(db, 999, {
-        completedAt: "2025-02-01T10:00:00.000Z",
+        completedAt: new Date("2025-02-01T10:00:00.000Z"),
         durationMs: 1,
         invoiceCount: 1,
         continuationAfter: null,
@@ -135,7 +142,7 @@ describe("sync-runs repository", () => {
     ).rejects.toThrow();
     await expect(
       markSyncRunError(db, 999, {
-        completedAt: "2025-02-01T10:00:00.000Z",
+        completedAt: new Date("2025-02-01T10:00:00.000Z"),
         durationMs: 1,
         errorMessage: "boom",
         errorType: "Error",
@@ -153,5 +160,31 @@ describe("sync-runs repository", () => {
     expect(runs).toHaveLength(2);
     expect(runs[0]?.windowFrom).toBe("2025-03-01");
     expect(runs[1]?.windowFrom).toBe("2025-02-01");
+  });
+
+  it("requestedAt is a Date instance with millisecond precision in the valid epoch range", async () => {
+    const run = await createSyncRun(db, {
+      windowFrom: "2025-01-01",
+      windowTo: "2025-01-31",
+    });
+
+    expect(run.requestedAt).toBeInstanceOf(Date);
+    const epochMs = run.requestedAt.getTime();
+    expect(epochMs).toBeGreaterThanOrEqual(946684800000); // 2000-01-01
+    expect(epochMs).toBeLessThanOrEqual(4102444800000); // 2100-01-01
+    // Pins milliseconds, not seconds: this value should be 13 digits, not 10
+    expect(epochMs.toString().length).toBe(13);
+  });
+
+  it("inserting a sync_runs row without specifying requestedAt still populates it", async () => {
+    // createSyncRun omits requestedAt from the input
+    const run = await createSyncRun(db, {
+      windowFrom: "2025-01-01",
+      windowTo: "2025-01-31",
+    });
+
+    // The application-side default should have populated it
+    expect(run.requestedAt).toBeInstanceOf(Date);
+    expect(run.requestedAt.getTime()).toBeGreaterThan(0);
   });
 });
