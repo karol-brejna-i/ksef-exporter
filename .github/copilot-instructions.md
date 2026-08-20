@@ -10,6 +10,7 @@ here so every assistant picks them up.
 - Read `design/IMPLEMENTATION_PLAN.md` for phase status and the next work. Treat its "Current implementation status" section as authoritative; do not infer completion from scaffolding alone.
 - Read `design/IMPORT_OBSERVABILITY_PLAN.md` before changing import logging, diagnostics, or traceability. Its implementation is complete and its boundary still excludes quota-behavior changes unless explicitly requested.
 - Read `design/INVOICE_ITEMS_PLAN.md` before touching invoice line items. It is a planned, not-yet-implemented workstream (schema, parser, repository, sync integration, backfill, API, expandable-row UI) that derives items from the already-stored `invoices.raw_xml` and makes no new KSeF calls.
+- Read `design/SCHEMA_TYPES_PLAN.md` before changing a column type, writing a migration, or touching a temporal value. It is a planned, not-yet-implemented workstream: every temporal column is still `TEXT` today. The "Dates and times" convention below is binding whether or not that plan has landed.
 - Read `README.md` for local setup and runtime commands.
 - Phases 0–7 are implemented. Phase 8 (manual entry) is next. Phase 9 is deferred and must not be started without an explicit request.
 
@@ -81,6 +82,22 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) for all commit 
 - Keep the summary line concise (~72 chars max) and all lowercase, including proper nouns and acronyms (e.g. `fix jwt token expiry`, not `fix JWT token expiry`); no trailing period.
 - Add a `!` after the type/scope (e.g. `feat!:`) or a `BREAKING CHANGE:` footer for breaking changes.
 - Reference issues/PRs in the footer when relevant (e.g. `Refs #12`).
+
+### Dates and times
+
+Three distinct kinds. Never conflate them — the schema cannot currently tell them apart, which is why this rule exists.
+
+- **Civil date** — a calendar day, no time, no zone (`issue_date`, `delivery_date`, `window_from`, `window_to`). Store as `TEXT` `YYYY-MM-DD`. Never convert one to an instant: that invents a timezone and yields an off-by-one day at every offset boundary.
+- **Instant** — a specific moment (`created_at`, `items_extracted_at`, `requested_at`, `started_at`, `completed_at`). Target representation is `INTEGER` epoch **milliseconds**, via Drizzle `integer({ mode: "timestamp_ms" })`, written by the application.
+- **Opaque KSeF token** — `continuation_point` and its `sync_runs` audit copies. It looks like a timestamp, but its contract is byte-identical round-trip to KSeF, including microseconds and explicit offset. Persist it verbatim.
+
+Rules that hold both before and after that migration:
+
+- Never compare temporal values lexicographically. ISO-8601 string order is not chronological once offsets differ (`+02:00` sorts above `+00:00` yet is two hours earlier), and an instant always sorts above a bare date sharing its prefix. Parse to epoch ms and compare numerically.
+- `windowFrom`/`windowTo` are **inclusive civil dates**. Compare an instant against the exclusive start of the day after `windowTo`, never against `windowTo` itself.
+- Do not let one column be written by both a SQL `current_timestamp` default (UTC, `YYYY-MM-DD HH:MM:SS`) and `new Date().toISOString()` (`...T...Z`). Prefer a single application-side write path: JavaScript parses the space-separated form as **local** time, a silent offset bug.
+- Convert or backfill legacy timestamps in SQL, never in TypeScript. SQLite reads the space-separated form as UTC (correct); JavaScript reads it as local (wrong).
+- Validate temporal request fields for actual format and calendar validity, not just `z.string().min(1)`.
 
 <!--
 Add future conventions below as their own subsections, e.g.:
