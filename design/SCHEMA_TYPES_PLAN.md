@@ -1,7 +1,8 @@
 # Schema Column Types Plan — dates, instants, and other over-broad columns
 
-**Status:** proposed, not started. To be executed with parallel agents — see §5.
-**Last updated:** 2026-08-20 15:19
+**Status:** Phases 1–3 implemented and validated (2026-08-20). Phase 4 (money as
+integer minor units) deferred; Phase 5 is a recorded decision. See §8 for the outcome.
+**Last updated:** 2026-08-20 16:57
 **Scope owner:** this document is the single source of truth for the column-type
 workstream. It does not change sync quota behaviour, KSeF request shapes, or the
 categorization engine.
@@ -847,15 +848,94 @@ something, that is the signal to stop and escalate, not to decide.**
 
 ## 7. Definition of done
 
-- [ ] `src/time.ts` exists with tests pinning the exact epoch-ms values from §2.4.
-- [ ] Regression tests for Defects A, B, and C exist and **fail on the pre-fix code**.
-- [ ] Migrations 0004, 0005, 0006 applied; all §4 verification queries return the
-      expected values.
-- [ ] `PRAGMA table_info` reports INTEGER for all five instant columns, with no SQL
+- [x] `src/time.ts` exists with tests pinning the exact epoch-ms values from §2.4.
+- [x] Regression tests for Defects A, B, and C exist and **fail on the pre-fix code**.
+- [x] Migrations applied; all §4 verification queries return the expected values.
+      Five migrations were needed, not three — see §8.1.
+- [x] `PRAGMA table_info` reports INTEGER for all five instant columns, with no SQL
       default on `created_at` / `requested_at`.
-- [ ] `pnpm test`, `pnpm --dir web test`, both typechecks, and `pnpm run lint` pass.
-- [ ] Running-app smoke check done and the dev server killed.
-- [ ] `scripts/export-invoices.py` output diffed against a pre-migration export.
-- [ ] Every delegated diff read by the coordinator, not just run (§5.4).
-- [ ] Phase 4 prerequisite query run read-only and its result reported (§5.7).
-- [ ] `design/IMPLEMENTATION_PLAN.md` updated with the outcome and actual test counts.
+- [x] `pnpm test`, `pnpm --dir web test`, both typechecks, and `pnpm run lint` pass.
+- [x] Running-app smoke check done and the dev server killed.
+- [x] `scripts/export-invoices.py` output diffed against a pre-migration export.
+- [x] Every delegated diff read by the coordinator, not just run (§5.4).
+- [x] Phase 4 prerequisite query run read-only and its result reported (§5.7).
+- [x] `design/IMPLEMENTATION_PLAN.md` updated with the outcome and actual test counts.
+
+---
+
+## 8. Outcome (2026-08-20)
+
+Phases 1–3 shipped in three commits: `966b3db` (`src/time.ts`), `6f285ab` (Phase 1
+comparison fixes, API validation, frontend), `9c4c067` (Phases 2–3, the schema
+migration and application code).
+
+Final validation: **227 backend tests, 47 frontend tests, both typechecks, and lint
+all pass.** Row counts, sums, NULL counts and ordering are unchanged on real data,
+and an Excel export of 2026-08 is cell-for-cell identical across the migration
+(74 rows, zero differing cells).
+
+### 8.1 Where the plan was wrong
+
+Three things §4 did not anticipate. Each is recorded because the plan was otherwise
+followed literally, and a future reader should know which parts were load-bearing.
+
+**The contract step needed two migrations, not one.** §4 Phase 2 assumed drizzle-kit
+would rename `created_at_ms` → `created_at` while the old TEXT `created_at` was still
+present. It will not: with both names in its snapshot it emits a table rebuild that
+copies the TEXT column into the new INTEGER one — the exact silent corruption the
+phase was written to avoid. The fix was to drop the old columns in `0006` first, so
+the target names were free, and rename in `0007`. Constraints and the index then
+landed in `0008`.
+
+**`drizzle-kit generate`'s rename prompt cannot be automated.** There is no
+non-interactive flag, and it requires a real TTY (piping its output to `grep` or
+`tail` is enough to break it). Two attempts to drive it with `expect` failed — one
+mis-selected an option, one hung. A human answered the five prompts. Budget for this:
+it is the one step in this workstream that cannot be delegated or scripted.
+
+**Foreign keys had to be disabled around migrations, in `createDb`.** This is the
+serious one. SQLite emulates `ALTER TABLE` by rebuilding into a temp table and
+dropping the original, and a `DROP TABLE` with enforcement on fires `ON DELETE
+CASCADE`. Migration `0008` rebuilds `invoices`, and `invoice_items` references it
+with `ON DELETE CASCADE` — so the rebuild **silently deleted all 2,437 line items**
+on a trial copy. The `PRAGMA foreign_keys=OFF` drizzle-kit writes into the migration
+file does not help: the migrator runs inside a transaction, where that pragma is a
+no-op. `createDb` now sets the pragma outside the transaction and runs
+`PRAGMA foreign_key_check` afterwards. `src/db/client.test.ts` has a regression test,
+verified to fail without the fix.
+
+The lesson generalises beyond this workstream: **any future migration that rebuilds
+`invoices` would have hit this**, and the failure is silent — no error, no warning,
+just an empty child table.
+
+### 8.2 Two process notes
+
+**Trial the migration on a copy first.** `cp` the database, run migrations against
+the copy, compare counts and sums, and only then touch the real file. That is what
+caught the cascade deletion. It costs seconds.
+
+**There is more than one live database.** `.env` is a symlink to a per-tenant env
+file, and `DATABASE_PATH` differs between them: `portowa.env` points at
+`data/tenants/portowa/ksef-exporter.sqlite` (530 invoices, 5,735 items), while
+`parkowa.env` points at `data/ksef-exporter.sqlite` (249 invoices, 2,437 items).
+Migrating "the database" migrates only one of them; the others are migrated whenever
+the app is next started against them, since `createDb` applies migrations on open.
+Back up **every** tenant database before a destructive migration, not just the
+default one.
+
+### 8.3 Phase 4 prerequisite result
+
+Run read-only against live data. Every monetary column is exactly 2-decimal:
+
+| Column                     | Rows failing `ROUND(col, 2)` |
+| :------------------------- | ---------------------------: |
+| `invoices.gross_total`     |                            0 |
+| `invoice_items.net_value`  |                            0 |
+| `invoice_items.gross_value`|                            0 |
+| `invoice_items.vat_value`  |                            0 |
+| `invoice_items.discount`   |                            0 |
+| `invoice_items.excise`     |                            0 |
+
+So Phase 4 is viable for all six columns whenever it is picked up. It remains
+deferred, and `quantity`, `unit_price_net`, `unit_price_gross`, `exchange_rate` and
+`vat_rate_oss` must still be excluded from it per §4 Phase 4.
