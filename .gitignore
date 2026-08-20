@@ -11,3 +11,4 @@ coverage/
 .pnpm-store/
 *.tsbuildinfo
 chat.json
+scratch/

@@ -1,7 +1,7 @@
 # Schema Column Types Plan — dates, instants, and other over-broad columns
 
-**Status:** proposed, not started.
-**Last updated:** 2026-08-20 13:32
+**Status:** proposed, not started. To be executed with parallel agents — see §5.
+**Last updated:** 2026-08-20 15:19
 **Scope owner:** this document is the single source of truth for the column-type
 workstream. It does not change sync quota behaviour, KSeF request shapes, or the
 categorization engine.
@@ -259,7 +259,7 @@ Constraint support, also verified on 3.53.0:
 - `STRICT` tables work (`cannot store TEXT value in INTEGER column`). **But
   drizzle-kit 0.31.10 cannot emit `STRICT`**, and it diffs against its own snapshot
   JSON, so a hand-added `STRICT` keyword would be silently dropped by the next
-  generated table rebuild. See §6.
+  generated table rebuild. See §4 Phase 5.
 
 ### 2.5 Code inventory
 
@@ -470,6 +470,9 @@ engine, Phase 8 manual entry, and the 249-rows-all-`needs_review` observation.
 Five phases. **Phases 1–3 are the core work and should ship together.** Phase 4 is a
 recommended but separable follow-up. Phase 5 is a documented decision, not code.
 
+Phases are the *reading* order. For the **execution** order — which threads run
+concurrently, who owns which file, and which parts must not be delegated — see §5.
+
 ### Phase 0 — Prerequisites (do not skip)
 
 1. Stop any running dev server. A stray `tsx watch src/api/main.ts` holds the SQLite
@@ -487,9 +490,9 @@ recommended but separable follow-up. Phase 5 is a documented decision, not code.
    SELECT COUNT(*) FROM sync_runs WHERE started_at IS NULL;          -- expect 3
    SELECT ROUND(SUM(gross_total), 2) FROM invoices;
    ```
-4. Confirm the working tree is clean apart from the known in-flight edits to
-   `src/sync.ts`, `src/sync.test.ts`, and `design/SYNC_CONTINUATION_POINT_ANALYSIS.md`.
-   **This workstream overlaps `src/sync.ts` — land or rebase that work first.**
+4. Confirm the working tree is clean. **This workstream overlaps `src/sync.ts`, so any
+   in-flight edits to it must land or be rebased first.** ✅ Done: the continuation-guard
+   work landed as `4077e53` and this document as `43c951a` (§5.7). Only step 2 remains.
 
 ### Phase 1 — `src/time.ts` and the comparison fixes (no schema change yet)
 
@@ -702,19 +705,147 @@ drizzle-kit gains `STRICT` support.
 
 ---
 
-## 5. Risk register
+## 5. Executing this plan with parallel agents
 
-| Risk                                                                             | Likelihood | Mitigation                                                                                               |
-| :------------------------------------------------------------------------------- | :--------- | :------------------------------------------------------------------------------------------------------- |
-| Drizzle-kit "drop + create" instead of "rename" in 0006, discarding the backfill | Medium     | Read the generated SQL before applying; verification queries after 0005 *and* after 0006; Phase 0 backup |
-| A JS-side backfill is used by mistake, baking in the +2 h local-time error       | Medium     | §2.4 conclusion 2 is explicit; the backfill lives in a SQL migration, not a script                       |
-| An instant is written in **seconds** instead of ms after the change              | Medium     | The `BETWEEN 946684800000 AND 4102444800000` CHECK rejects it at insert time                             |
-| Conflict with the in-flight `src/sync.ts` working-tree changes                   | High       | Phase 0 step 4: land or rebase that work first                                                           |
-| KSeF changes its continuation-point format mid-migration                         | Low        | The token stays verbatim TEXT; only parsing is centralised, in one tested function                       |
-| Excel export breaks silently on the new integer `created_at`                     | Medium     | Phase 3 requires diffing one exported month against a pre-migration export                               |
-| Adding CHECKs forces table rebuilds that fail on existing data                   | Low        | §2.2/§2.3 confirm zero violating rows today for every proposed constraint                                |
+§4's phases are numbered for reading order. The dependency spine here is far stiffer
+than in `design/INVOICE_ITEMS_PLAN.md` §10: migrations 0004 → 0005 → 0006 are strictly
+ordered, and every Phase 3 file depends on 0006's final column types. So the achievable
+parallelism is narrower — **six hops, four agents at peak** — and almost all of it lives
+in Phase 3. Three of the six waves are deliberately serial and single-owner.
 
-## 6. Definition of done
+This section follows the ownership discipline established in `INVOICE_ITEMS_PLAN.md`
+§10, which was executed successfully on 2026-08-12; its §10.6 retrospective is the
+source of several rules below.
+
+### 5.1 Dependency graph and file ownership
+
+Every thread owns its files exclusively. **An agent must not edit a file another thread
+owns**, in any wave.
+
+| Thread                    | Owns (exclusive write)                                                     | Depends on                |
+| :------------------------ | :------------------------------------------------------------------------- | :------------------------ |
+| **W0** Checkpoint         | git state only; database backup                                            | —                         |
+| **W1** Time contract      | `src/time.ts`, `src/time.test.ts` (both new)                               | —                         |
+| **W2a** Sync              | `src/sync.ts` + `.test.ts`                                                 | W1                        |
+| **W2b** API validation    | `src/api/server.ts` + `.test.ts`                                           | W1                        |
+| **W2c** Frontend          | `web/**` only                                                              | wire contract (§3.5) only |
+| **W3** Migration spine    | `src/db/schema.ts`, `drizzle/migrations/**`, the live database             | W1, W2                    |
+| **W4a** Invoices repo     | `src/db/invoices.ts` + `.test.ts`                                          | W3                        |
+| **W4b** Items & runs repo | `src/db/invoice-items.ts` + `.test.ts`, `src/db/sync-runs.ts` + `.test.ts` | W3                        |
+| **W4c** API instants      | `src/api/server.ts` + `.test.ts`                                           | W3                        |
+| **W4d** Scripts & tools   | `scripts/export-invoices.py`, `src/tools/**`, `scratch/**`                 | W3                        |
+| **W5** Integration        | read-mostly; `design/*.md`                                                 | W4                        |
+
+Two things flatten this graph more than it first appears:
+
+- **The frontend does not wait for the migration.** `web/` imports no backend code and
+  its tests mock `fetch`, so once §3.5 fixes the wire contract — all five instant fields
+  become uniformly `…T…Z` — the UI thread can run in Wave 2, a full wave before the
+  columns actually change type. This is the same reasoning that let Step 7 run in Wave A
+  of `INVOICE_ITEMS_PLAN.md` §10.1.
+- **Phase 1 is independently shippable.** It fixes Defects B and C with no schema change
+  at all, so it can be committed and fully validated *before* the riskiest part of the
+  workstream — irreversible data conversion — begins.
+
+### 5.2 The three collisions, and how the schedule resolves them
+
+Executed naively, three files would have had two owners each.
+
+| Collision                                                                                        | Resolution                                                                                                                            |
+| :----------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/api/server.ts` — W2b tightens the zod schemas, W4c drops the `toISOString()` calls          | **Separated by wave, never concurrent.** W2b must not touch the timestamp writes; W4c must not touch the request schemas.             |
+| `src/db/schema.ts` — CHECK constraints, five type changes, and the new index all land here       | **The coordinator owns it outright, for the whole workstream.** No agent writes it in any wave; it is inseparable from `db:generate`. |
+| `src/sync.ts` — W2a rewrites the comparisons; Phase 3 also reads `row.itemsExtractedAt === null` | **W2a owns it.** That NULL check is unaffected by the type change; W4 agents verify it via tests and report, never edit.              |
+
+### 5.3 Wave schedule
+
+```
+Wave 0   land in-flight work · back up the database             coordinator, serial
+Wave 1   src/time.ts + src/time.test.ts                         coordinator, serial
+Wave 2   sync.ts  ‖  server.ts zod  ‖  web/**                   3 concurrent
+Wave 3   schema.ts → 0004 → 0005 → 0006 → verification          coordinator, serial
+Wave 4   invoices ‖ items+runs ‖ server.ts ‖ scripts/tools      4 concurrent
+Wave 5   full validation · smoke check · Excel diff · docs      coordinator, serial
+```
+
+The coordinator runs full validation (`pnpm test`, `pnpm --dir web test`, both
+typechecks, `pnpm run lint`) at **every wave boundary** — never the individual agents.
+
+### 5.4 Which threads can go to a cheaper model
+
+Safe for a mid-tier model (Sonnet) — §4 supplies their content nearly verbatim and no
+design decision remains open:
+
+| Thread                 | Why it's mechanical                                                                                                                |
+| :--------------------- | :--------------------------------------------------------------------------------------------------------------------------------- |
+| **W2b** API validation | `invoiceQuerySchema` already demonstrates the regex-validated pattern to mirror; §4 Phase 1 step 5 names the exact three 400 cases |
+| **W2c** Frontend       | One `formatInstant` helper plus fixture updates; mirrors the existing `RecentImports` rendering                                    |
+| **W4a–d**              | §4 Phase 3 lists every file and the exact edit, down to the expression                                                             |
+
+Must stay on the strongest available model (the coordinator):
+
+| Thread                 | Why judgement is needed                                                                                                                                                                                                                              |
+| :--------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **W1** Time contract   | Offset parsing, the inclusive-date/exclusive-instant boundary, and the branded types *are* the correctness argument for the whole plan. Its tests must pin the §2.4 values, which §5.5 says not to accept from an agent.                             |
+| **W2a** Sync           | The orchestrator behind the `maxIterations: 1` rate-limit incident. `INVOICE_ITEMS_PLAN.md` §10.4 already classifies this file as strongest-model-only, and Defects B and C are subtle enough that a passing suite does not by itself prove the fix. |
+| **W3** Migration spine | drizzle-kit prompts for rename detection in 0006; answering "drop + create" silently discards the entire 0005 backfill. Irreversible, against real business data.                                                                                    |
+
+Carried forward from `INVOICE_ITEMS_PLAN.md` §10.6: the single step that needed rework
+last time was the one classified as "mechanical" that still had a design decision hidden
+inside it. Nothing in Wave 4 chooses anything. **If an agent finds it must decide
+something, that is the signal to stop and escalate, not to decide.**
+
+### 5.5 Not delegable
+
+- **Any write to `data/ksef-exporter.sqlite`.** Migrations 0004–0006 convert real
+  business data. Coordinator only, and only after the Phase 0 backup.
+- **`pnpm run db:generate`.** Concurrent drizzle-kit invocations race on
+  `drizzle/migrations/meta/`. One owner, Wave 3 only.
+- **Reading the generated 0006 SQL before it is applied**, per §4 Phase 2 and the §6 risk register.
+- **Accepting the §2.4 epoch-ms values, the §2.2/§2.3 census, or the Phase 0 invariant
+  counts.** Re-derive them. They are the regression signal for the whole workstream; a
+  deviation is a bug to investigate, not a number to update.
+
+### 5.6 Concurrency rules
+
+- **Agents run focused tests only** (e.g. `pnpm test src/db/invoices.test.ts`). A
+  concurrent full-suite or `tsc --noEmit` run reports failures caused by *other* agents'
+  half-finished files, and an agent that tries to "fix" those corrupts work it does not own.
+- **Vitest does not typecheck.** Run `pnpm run typecheck` at every wave boundary, not just
+  the suite — §10.6 of `INVOICE_ITEMS_PLAN.md` records this hiding real breakage twice.
+- An agent that hits a failure in a file it does not own **reports file, line, and cause**
+  and stops. It does not edit outside its lane, and does not delete the assertion.
+- **A Wave 4 agent must never resolve a `Date`-vs-`string` type error by widening the type
+  back to `string`.** That is this migration being silently undone one file at a time, and
+  it will still compile and still pass tests. Escalate instead.
+
+### 5.7 Scope decisions taken (2026-08-20)
+
+- **Wave 0 is already done.** The in-flight continuation-guard work landed as `4077e53`
+  (`fix(sync): apply continuation point only within requested window`) and this document
+  as `43c951a`, satisfying Phase 0 step 4. Only the database backup remains.
+- **Phase 4 (money → integer minor units) is deferred.** The core is Phases 1–3. The
+  Phase 4 prerequisite query is still run, read-only, in Wave 5, and its result reported
+  so the decision can be taken separately, on evidence.
+- **Phase 5 (STRICT) is a recorded decision, not work.** No thread owns it.
+
+---
+
+## 6. Risk register
+
+| Risk                                                                                    | Likelihood | Mitigation                                                                                                       |
+| :-------------------------------------------------------------------------------------- | :--------- | :--------------------------------------------------------------------------------------------------------------- |
+| Drizzle-kit "drop + create" instead of "rename" in 0006, discarding the backfill        | Medium     | Read the generated SQL before applying; verification queries after 0005 *and* after 0006; Phase 0 backup         |
+| A JS-side backfill is used by mistake, baking in the +2 h local-time error              | Medium     | §2.4 conclusion 2 is explicit; the backfill lives in a SQL migration, not a script                               |
+| An instant is written in **seconds** instead of ms after the change                     | Medium     | The `BETWEEN 946684800000 AND 4102444800000` CHECK rejects it at insert time                                     |
+| Conflict with the in-flight `src/sync.ts` working-tree changes                          | resolved   | Landed as `4077e53` before Wave 1 (§5.7)                                                                         |
+| A Wave 4 agent "fixes" a `Date`-vs-`string` error by widening the type back to `string` | Medium     | §5.6 forbids it; the coordinator reads every delegated diff, and `pnpm run typecheck` runs at each wave boundary |
+| Two agents edit `src/api/server.ts` concurrently (W2b and W4c)                          | Low        | §5.2: separated by wave, never scheduled together                                                                |
+| KSeF changes its continuation-point format mid-migration                                | Low        | The token stays verbatim TEXT; only parsing is centralised, in one tested function                               |
+| Excel export breaks silently on the new integer `created_at`                            | Medium     | Phase 3 requires diffing one exported month against a pre-migration export                                       |
+| Adding CHECKs forces table rebuilds that fail on existing data                          | Low        | §2.2/§2.3 confirm zero violating rows today for every proposed constraint                                        |
+
+## 7. Definition of done
 
 - [ ] `src/time.ts` exists with tests pinning the exact epoch-ms values from §2.4.
 - [ ] Regression tests for Defects A, B, and C exist and **fail on the pre-fix code**.
@@ -725,4 +856,6 @@ drizzle-kit gains `STRICT` support.
 - [ ] `pnpm test`, `pnpm --dir web test`, both typechecks, and `pnpm run lint` pass.
 - [ ] Running-app smoke check done and the dev server killed.
 - [ ] `scripts/export-invoices.py` output diffed against a pre-migration export.
+- [ ] Every delegated diff read by the coordinator, not just run (§5.4).
+- [ ] Phase 4 prerequisite query run read-only and its result reported (§5.7).
 - [ ] `design/IMPLEMENTATION_PLAN.md` updated with the outcome and actual test counts.
