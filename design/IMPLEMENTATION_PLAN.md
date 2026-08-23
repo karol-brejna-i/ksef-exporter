@@ -1,6 +1,6 @@
 # KSeF Exporter — Implementation Plan
 
-**Last updated:** 2026-08-10 16:33
+**Last updated:** 2026-08-23 13:27 CEST
 
 **Companion document to** [`SPEC.md`](./SPEC.md). Read that first for the business context and KSeF integration mechanics — this document is the step-by-step build order.
 
@@ -24,11 +24,12 @@
 
 Phases 0–7 are implemented. Phase 8 is the next active phase; its shared persistence primitive (`insertManualInvoice`) and `source = "manual"` schema support already exist from Phase 3, but there is no manual-entry domain service, API route, form, or feature-level test yet. Phase 9 remains explicitly deferred.
 
-Two companion workstreams do not renumber or replace Phase 8:
+Companion workstreams do not renumber or replace Phase 8:
 
 - **[`IMPORT_OBSERVABILITY_PLAN.md`](./IMPORT_OBSERVABILITY_PLAN.md)** — implemented. Imports now have correlated structured lifecycle logs, durable timings/continuation/count/error diagnostics, expandable UI details, safe error classification, and sanitized startup context. Quota, retry, continuation, and export-window behavior was intentionally unchanged.
 - **[`INVOICE_ITEMS_PLAN.md`](./INVOICE_ITEMS_PLAN.md)** — implemented (2026-08-12). Line items are now persisted and displayed: `invoice_items` table (migration `0003`), parser extraction of all 25 FA(3) `FaWiersz` fields, repository, sync integration with `itemsInsertedCount`/`itemsFailedCount` diagnostics, `pnpm run backfill:items`, `GET /invoices/:id/items`, and an expandable row in the invoices table. Backfilled the existing data from stored `raw_xml` with no KSeF calls: 249 invoices → 2 437 items, 0 failures, per-VAT-rate reconciliation 202/202. Backend 178 tests, web 46.
 - **[`SCHEMA_TYPES_PLAN.md`](./SCHEMA_TYPES_PLAN.md)** — Phases 1–3 implemented (2026-08-20), migrations `0004`–`0008`. Every instant column (`created_at`, `items_extracted_at`, `requested_at`, `started_at`, `completed_at`) is now `INTEGER` epoch milliseconds written solely by the application; both `current_timestamp` SQL defaults are gone; civil dates stay `TEXT`. Adds `src/time.ts` as the single owner of temporal semantics, the CHECK constraints the schema previously lacked, and an `issue_date` index. Fixed three defects: Recent Imports rendering every timestamp two hours early, the continuation-point window guard discarding valid resume points into a rate-limited endpoint, and `hasMore` reporting an import complete while invoices remained. Data verified unchanged on real data (249/2 437/8 rows, sums identical, Excel export cell-for-cell identical). **Backend 227 tests, web 47.** Phase 4 (money as integer minor units) is deferred but its prerequisite check passed on all six columns; see §8 of that plan for what it got wrong, including a cascade-delete hazard affecting any future migration that rebuilds `invoices`.
+- **[`SALES_INVOICES_PLAN.md`](./SALES_INVOICES_PLAN.md)** — in progress (opened 2026-08-23). Brings sales invoices (`Subject1`) into scope for revenue reporting, stored in the same `invoices` table behind a `direction` column. Stage 0 (reconnaissance) is complete: the existing `InvoiceRead` token authorises `Subject1`, 39 sales invoices were sampled across both tenants, all parsed by the unmodified parser with zero errors and zero KSeF-number collisions — see [`INVOICE_TYPES_ANALYSIS.md`](./INVOICE_TYPES_ANALYSIS.md) §9. Remaining stages (schema, sync, API, UI, backfill) are not yet implemented. Sales invoices are never categorized.
 
 Re-verified on 2026-08-13 with Node 24.16.0 (the runtime was moved from 22.23.1 to 24.16.0 that day; `@types/node` bumped to `^24` and `better-sqlite3` rebuilt for ABI 137): 178 backend tests and 46 frontend tests pass; backend and frontend typechecks and the frontend production build pass; the API boots and serves. Biome passes for tracked source files (the only warning is the oversized, untracked `design/chat.json` chat export, which must not be committed). The previous baseline was 125 backend / 30 frontend tests on 2026-08-10 under Node 22.23.1.
 

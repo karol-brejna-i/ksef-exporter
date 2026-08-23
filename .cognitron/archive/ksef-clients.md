@@ -18,6 +18,13 @@ fresh, good docs (incl. example flows)
 
 ksef-client to TypeScript SDK do integracji z KSeF. Biblioteka udostępnia typowane klienty endpointów, gotowe workflowy (auth/sesje/eksport) i narzędzia pomocnicze (XAdES, QR, linki weryfikacyjne).
 
+!!!na razie użyasz tego
+
+
+### https://github.com/Flopsstuff/ksef-client-ts
+chyba do rozważenia
+
+
 ### https://github.com/ArturSkowronski/ksef-cli
 
 KSEF CLI - Narzędzie CLI do obsługi Krajowego Systemu e-Faktur (KSeF) - dla ludzi i agentów AI. 

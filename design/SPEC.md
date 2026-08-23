@@ -1,6 +1,6 @@
 # KSeF Exporter — Technical Specification
 
-**Last updated:** 2026-08-10 15:53
+**Last updated:** 2026-08-23 13:27 CEST
 
 **Status:** Draft — business context and integration mechanics agreed; implementation plan defined in [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md).
 **Audience:** Developers / AI coding agents implementing this system.
@@ -39,6 +39,7 @@
 - **HU-02 — Manual entry of exceptions:** As a user, I want to manually add an invoice/receipt (e.g. from a foreign vendor, or a receipt) so that my monthly settlement is 100% complete, even for documents that can never appear in KSeF.
 - **HU-03 — Visual review and categorization:** As a user, I want a clear tabular UI split by category (Media / Purchased goods / Other), with clear indication of which expenses the system assigned with full confidence vs. which need my confirmation.
 - **HU-04 — Rule correction:** As a user, I want to change the category of a specific expense from a dropdown in the UI, and have the system remember this choice for the future (i.e., it should feed back into the rules engine).
+- **HU-05 — Revenue alongside costs (added 2026-08):** As the person responsible for settlements, I want to see the invoices the company has *issued* in the same application as the ones it has received, so turnover and costs for a month can be read off one system instead of reconciling this one against a separate spreadsheet. Sales invoices are browsed and totalled, not categorized — see [`SALES_INVOICES_PLAN.md`](./SALES_INVOICES_PLAN.md).
 
 **UX principle (added 2026-07, real first-use feedback):** these HUs are entry points into one app, not separate screens of equal weight. Browsing/reviewing invoices (HU-03) must be the **default landing view** after login; triggering a new import (HU-01) is a secondary, clearly-labeled action alongside it, not the screen itself. Real first-use feedback showed that leading with the import action left the user unable to tell whether previously imported data existed or an import had actually worked — see [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md) Phase 7.
 
@@ -71,7 +72,7 @@
 ### 2.5 Explicitly out of scope for v1 (deferred)
 
 - **Payroll ("Wypłaty"):** Wages never appear in KSeF; historically tracked in the same spreadsheet but **out of scope** for this system for now — manual entry only if ever needed, no dedicated import.
-- **Sales/turnover invoices:** Only **purchase** invoices are pulled from KSeF. Turnover/revenue figures are tracked separately, outside this system.
+- **Sales/turnover invoices:** ~~Only purchase invoices are pulled from KSeF.~~ **Superseded 2026-08-23.** Sales invoices (`Subject1`) are now in scope for revenue reporting (HU-05); see [`SALES_INVOICES_PLAN.md`](./SALES_INVOICES_PLAN.md). What remains out of scope is VAT reconciliation, categorizing sales, and anything accountant-facing.
 - **Multi-location support:** Single location ("Parkowa") only; keep the data model reasonably open to this later but do not build it now.
 - **LLM categorization:** Rules-first engine is required for v1. LLM fallback is a planned extension; its provider-agnostic interface should be introduced with that extension, not maintained speculatively before it has a caller.
 
@@ -97,7 +98,7 @@ Also considered and **rejected**: a permanent "spreadsheet nickname → KSeF leg
 
 **Target system:** KSeF 2.0 (mandatory rollout version, per Polish e-invoicing law). Official API documentation: [github.com/CIRFMF/ksef-api](https://github.com/CIRFMF/ksef-api). Test environment: `https://api-test.ksef.mf.gov.pl`.
 
-**Purchase-invoice role:** Parkowa is always the **buyer**. All invoice queries/exports use `SubjectType = Subject2` (buyer role in KSeF's model) to retrieve purchase invoices only.
+**Invoice direction:** KSeF's `SubjectType` selects which side of the invoice you are asking about. `Subject2` (buyer role) returns **purchase** invoices; `Subject1` (seller role) returns **sales** invoices. The same document is both, depending on who asks — direction is not a property of the XML. Purchases were the only direction until 2026-08-23; sales are now ingested too (HU-05), stored with an explicit `direction` column and their own continuation point. Each sync call covers exactly one direction. See [`SALES_INVOICES_PLAN.md`](./SALES_INVOICES_PLAN.md).
 
 ### 3.1 Authentication
 
@@ -126,7 +127,7 @@ Authentication is a two-phase process: a **one-time human setup step**, then a *
 KSeF's recommended approach for syncing invoices into an external system is **incremental export**, not one-by-one polling:
 
 1. `POST /invoices/exports` — initiates an asynchronous export job. Request includes:
-   - `filters.subjectType = "Subject2"` (buyer role — purchase invoices).
+   - `filters.subjectType` — `"Subject2"` for purchases (buyer role) or `"Subject1"` for sales (seller role). One direction per export; each keeps its own continuation point.
    - `filters.dateRange = { dateType: "PermanentStorage", from, to, restrictToPermanentStorageHwmDate: true }`. **`PermanentStorage` is required for incremental sync** — it's the only date type immune to async-ingestion delays in KSeF; `Issue`/`Invoicing` dates can cause missed or duplicated data across windows.
    - `encryption` — a client-generated AES-256 key/IV, RSA-encrypted for KSeF, used by KSeF to encrypt the resulting package.
 2. `GET /invoices/exports/{referenceNumber}` — poll until the export completes. Response includes URLs for one or more encrypted ZIP package parts, plus:
@@ -187,7 +188,6 @@ Each invoice XML (FA(2)/FA(3) logical structure) should be parsed into (at minim
 
 - LLM-based categorization fallback (interface should exist; implementation can come later).
 - Multi-location / multi-entity support.
-- Sales/turnover invoice ingestion from KSeF.
 - Payroll import/automation.
 - Background/scheduled invoice sync (v1 is manual-trigger only).
 - Cloud hosting/deployment hardening (v1 targets self-hosted).

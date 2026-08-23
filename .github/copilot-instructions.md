@@ -9,7 +9,8 @@ here so every assistant picks them up.
 - Read `design/SPEC.md` for product requirements and KSeF mechanics.
 - Read `design/IMPLEMENTATION_PLAN.md` for phase status and the next work. Treat its "Current implementation status" section as authoritative; do not infer completion from scaffolding alone.
 - Read `design/IMPORT_OBSERVABILITY_PLAN.md` before changing import logging, diagnostics, or traceability. Its implementation is complete and its boundary still excludes quota-behavior changes unless explicitly requested.
-- Read `design/INVOICE_ITEMS_PLAN.md` before touching invoice line items. It is a planned, not-yet-implemented workstream (schema, parser, repository, sync integration, backfill, API, expandable-row UI) that derives items from the already-stored `invoices.raw_xml` and makes no new KSeF calls.
+- Read `design/INVOICE_ITEMS_PLAN.md` before touching invoice line items. It is implemented (schema, parser, repository, sync integration, backfill, API, expandable-row UI) and derives items from the already-stored `invoices.raw_xml`, making no new KSeF calls.
+- Read `design/SALES_INVOICES_PLAN.md` before touching invoice direction, subject types, or anything that reads or aggregates invoices. Sales invoices (`Subject1`) are in scope as of 2026-08-23; Stage 0 is complete and the remaining stages are not yet implemented.
 - Read `design/SCHEMA_TYPES_PLAN.md` before changing a column type, writing a migration, or touching a temporal value. Phases 1–3 are implemented: every instant column is now `INTEGER` epoch milliseconds and civil dates remain `TEXT`. Its §8 records what the plan got wrong, including a cascade-delete hazard that will bite any future migration rebuilding `invoices`.
 - Read `README.md` for local setup and runtime commands.
 - Phases 0–7 are implemented. Phase 8 (manual entry) is next. Phase 9 is deferred and must not be started without an explicit request.
@@ -40,7 +41,8 @@ here so every assistant picks them up.
 
 ## Product invariants
 
-- The application imports purchase invoices only (`Subject2`) and uses `PermanentStorage` for incremental synchronization.
+- The application imports purchase invoices (`Subject2`) and sales invoices (`Subject1`), and uses `PermanentStorage` for incremental synchronization. Each sync call covers exactly one direction and keeps its own continuation point.
+- Sales invoices are stored for revenue reporting only. They are never categorized: they carry `category_id = NULL` and `categorization_confidence = "not_applicable"`, and must never reach the correction path — on a sales invoice the seller is the tenant itself, so one rule would match every sales invoice ever issued.
 - KSeF access is read-only. Never add invoice-issuing permissions or log KSeF tokens, JWTs, or other secrets.
 - `syncPurchaseInvoices` intentionally defaults to `maxIterations: 1`. Do not remove this limit casually: the export-init endpoint is capped at 16 requests/minute and 20/hour, and the SDK default of 20 caused a real production rate-limit incident.
 - A sync persists its continuation point and records a `sync_runs` audit row. Preserve import traceability on both success and failure.

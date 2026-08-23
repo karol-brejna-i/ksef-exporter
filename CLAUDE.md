@@ -76,3 +76,11 @@ The shared Conventional Commits rules apply in full. In addition:
   `src/sync.ts:42`.
 - A formatter re-aligns markdown tables on save, which invalidates a pending `Edit`
   match ("File has been modified since read"). Re-read and re-match instead of retrying.
+
+## Named subagents
+
+`.claude/agents/` holds named, on-demand subagents (`runner`, `db-inspector`,
+`lockfile-guard`, `migration-reviewer`, `sync-rate-limit-reviewer`,
+`failure-diagnoser`) for delegating mechanical or narrowly-scoped work out of the main
+context. See `AGENTS.md` for the full index, when to reach for each one, and the list of
+side-effecting commands that must never be delegated or run automatically.
