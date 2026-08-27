@@ -22,6 +22,7 @@
     "extract:xlsx": "tsx src/tools/extract-xlsx.ts",
     "reconcile": "tsx src/tools/reconcile.ts",
     "backfill:items": "tsx src/tools/backfill-invoice-items.ts",
+    "backfill:invoice-kind": "tsx src/tools/backfill-invoice-kind.ts",
     "dev:api": "tsx watch src/api/main.ts",
     "start:api": "tsx src/api/main.ts",
     "db:generate": "drizzle-kit generate",

@@ -1,10 +1,11 @@
 # KSeF Exporter — Sales Invoices (`Subject1`): Ingestion & Revenue Reporting
 
-**Last updated:** 2026-08-23 13:27 CEST
+**Last updated:** 2026-08-27 19:21 CEST
 
-**Status:** Planned. Stage 0 (reconnaissance) is complete and its findings are recorded in
-[`INVOICE_TYPES_ANALYSIS.md`](./INVOICE_TYPES_ANALYSIS.md) §9. Stages 1–6 are not yet
-implemented.
+**Status:** In progress. Stage 0 (reconnaissance) and Stage 1 (documentation) are complete.
+Stage 2 (schema migration) is complete and applied to both live tenant databases. Stage 2b
+(`invoice_kind` backfill) is also complete and applied to both live tenant databases.
+Stages 3–6 are not yet implemented.
 
 **Companion to** [`SPEC.md`](./SPEC.md) and
 [`INVOICE_TYPES_ANALYSIS.md`](./INVOICE_TYPES_ANALYSIS.md). Like
@@ -194,12 +195,53 @@ The `DEFAULT 'purchase'` is what makes every existing row correct without a data
 `invoice_kind` is nullable and backfilled separately in Step 2b, so a backfill bug cannot
 compromise the migration.
 
+**Status: done (2026-08-23).** Applied as
+[`0009_hesitant_kat_farrell.sql`](../drizzle/migrations/0009_hesitant_kat_farrell.sql) to
+both tenant databases via `createDb()`, following the migration protocol in §6 exactly.
+Verification on both the `VACUUM INTO` trial copies and the real files: `invoices`
+count/sum and `invoice_items` count (the cascade canary) unchanged, zero `foreign_key_check`
+violations, `integrity_check` clean. Every existing row now has `direction = 'purchase'`
+and `invoice_kind`/`subject_type` `NULL`, as intended. `pnpm test` 227/227, `pnpm run
+typecheck` clean.
+
+**A real drizzle-kit codegen bug was found and worked around — read this before touching
+this migration again or generating a new one against a table with `CHECK` constraints.**
+Once a SQLite table has any `CHECK` constraint, `drizzle-kit generate` fully rebuilds it
+(drop + recreate + rename) for *any* change to that table, even a plain new nullable
+column with only a self-referencing `CHECK` — splitting the change into two migrations
+does not avoid this. The generated rebuild's `INSERT INTO __new_t (...) SELECT (...) FROM
+t` then references the brand-new columns **by name** in the `SELECT` half, where they do
+not exist yet in the pre-migration table (`no such column: direction`). Since this repo
+forbids hand-editing a generated migration, the fix was: `drizzle-kit generate --custom`
+for a tool-sanctioned empty file, but its accompanying snapshot is stale (carried forward
+unchanged rather than diffed against `schema.ts`); a throwaway ordinary `db:generate` run
+was used purely to obtain a correct snapshot (its buggy SQL was discarded), which was then
+paired with hand-written SQL — identical to drizzle-kit's own rebuild, with only the new
+columns' `SELECT`-list entries replaced by literal defaults/`NULL` — under one matching
+migration tag. A follow-up `db:generate` reporting "No schema changes" confirmed the
+schema, migration, and snapshot were all consistent before it was trialled or applied.
+
 ### Step 2b — Backfill `invoice_kind`
 
 Offline, from `invoices.raw_xml`, no KSeF calls — mirroring
 [`src/invoices/backfill-items.ts`](../src/invoices/backfill-items.ts). The extraction must
 tolerate `<RodzajFaktury>`, `<ns0:RodzajFaktury>`, and `<tns:RodzajFaktury>`; all three
 prefix styles occur in the live data. Dry-run first.
+
+**Status: done (2026-08-27).** Implemented as
+[`extractInvoiceKind`](../src/ksef/invoice-parser.ts) (raw, unvalidated extraction — the
+namespace-prefix tolerance above turned out to already be free: the parser is configured
+with `removeNSPrefix: true`, so all three prefix styles normalize to the same field before
+any extraction code runs), [`updateInvoiceKind`](../src/db/invoices.ts), and
+[`backfillInvoiceKind`](../src/invoices/backfill-invoice-kind.ts) plus its CLI wrapper
+(`pnpm run backfill:invoice-kind`). An invoice with no `RodzajFaktury` is skipped
+(non-fatal); one with a value outside the 7 XSD kinds is failed (non-fatal), since the
+column has a CHECK constraint. Dry-run against both live tenants first (parkowa 249/249,
+portowa 530/530 eligible, zero skipped/failed), then a `VACUUM INTO` backup of each
+(`data/backup/pre-invoice-kind-backfill/{parkowa,portowa}.sqlite`), then applied for real:
+both tenants now report zero remaining `invoice_kind IS NULL` rows. Resulting distribution:
+parkowa VAT 228 / KOR 20 / ROZ 1; portowa VAT 504 / KOR 26. `pnpm test` 235/235 (8 new),
+`pnpm run typecheck` clean.
 
 ### Step 3 — Sync
 

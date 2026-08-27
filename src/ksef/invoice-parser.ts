@@ -306,6 +306,16 @@ export function extractInvoiceItems(fa: Record<string, unknown>): InvoiceItemRec
 }
 
 /**
+ * Extracts Fa/RodzajFaktury, best-effort. Returns the raw string (or null if
+ * absent) rather than validating against the 7 XSD values here -- the caller
+ * owns validation against `invoices_invoice_kind_enum`, per
+ * design/SALES_INVOICES_PLAN.md Step 2b.
+ */
+export function extractInvoiceKind(fa: Record<string, unknown>): string | null {
+  return asString(fa.RodzajFaktury) ?? null;
+}
+
+/**
  * Parses a single KSeF purchase-invoice XML document (FA(2)/FA(3)) into a
  * flat record. Throws `InvoiceParsingError` if the XML is malformed or is
  * missing a field this application depends on -- silently producing a

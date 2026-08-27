@@ -2,13 +2,35 @@ import { and, eq, gte, lt } from "drizzle-orm";
 import type { Db } from "./client.js";
 import { invoices } from "./schema.js";
 
-export type CategorizationConfidence = "matched" | "needs_review";
+/**
+ * What may be *stored*. Wider than the engine's own result type: only sales
+ * invoices carry "not_applicable", and they never reach the engine.
+ */
+export type CategorizationConfidence = "matched" | "needs_review" | "not_applicable";
+
+/** Purchases come from KSeF Subject2, sales from Subject1. */
+export type InvoiceDirection = "purchase" | "sales";
+
+/** Fa/RodzajFaktury's 7 XSD values, per design/SCHEMA_TYPES_PLAN.md and the invoices_invoice_kind_enum CHECK. */
+export const INVOICE_KIND_VALUES = [
+  "VAT",
+  "KOR",
+  "ZAL",
+  "ROZ",
+  "UPR",
+  "KOR_ZAL",
+  "KOR_ROZ",
+] as const;
+
+export type InvoiceKind = (typeof INVOICE_KIND_VALUES)[number];
 
 export interface InvoiceRow {
   id: number;
   source: "ksef" | "manual";
+  direction: InvoiceDirection;
   ksefNumber: string | null;
   invoiceNumber: string;
+  invoiceKind: InvoiceKind | null;
   sellerNip: string | null;
   sellerName: string;
   buyerNip: string | null;
@@ -132,6 +154,22 @@ export async function updateInvoiceCategory(
   const [row] = await db
     .update(invoices)
     .set({ categoryId, categorizationConfidence: confidence })
+    .where(eq(invoices.id, invoiceId))
+    .returning();
+  if (!row) {
+    throw new Error(`Invoice ${invoiceId} not found`);
+  }
+  return row;
+}
+
+export async function updateInvoiceKind(
+  db: Db,
+  invoiceId: number,
+  kind: InvoiceKind,
+): Promise<InvoiceRow> {
+  const [row] = await db
+    .update(invoices)
+    .set({ invoiceKind: kind })
     .where(eq(invoices.id, invoiceId))
     .returning();
   if (!row) {

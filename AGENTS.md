@@ -48,6 +48,7 @@ by the primary agent (you), never scheduled or triggered by a hook.
   - `pnpm run migrate`, `pnpm run db:generate`
   - `pnpm run smoke:ksef`, `pnpm run smoke:invoices`, `pnpm run dump:invoices`
   - `pnpm run backfill:items` (without `--dry-run`)
+  - `pnpm run backfill:invoice-kind` (without `--dry-run`)
   - `pnpm run dev:api`, `pnpm run start:api`
   - any `git push`, `git commit --amend`, `git reset --hard`, or destructive migration
     applied directly to `data/*.sqlite`/`data/tenants/*/*.sqlite`
