@@ -1,11 +1,11 @@
 # KSeF Exporter — Sales Invoices (`Subject1`): Ingestion & Revenue Reporting
 
-**Last updated:** 2026-08-27 19:21 CEST
+**Last updated:** 2026-08-27 21:50 CEST
 
-**Status:** In progress. Stage 0 (reconnaissance) and Stage 1 (documentation) are complete.
-Stage 2 (schema migration) is complete and applied to both live tenant databases. Stage 2b
-(`invoice_kind` backfill) is also complete and applied to both live tenant databases.
-Stages 3–6 are not yet implemented.
+**Status:** Complete. Stages 0–5: reconnaissance, documentation, the schema migration, the
+`invoice_kind` backfill, the direction-aware sync engine, the API, and the Purchases/Sales
+UI toggle are all implemented, tested, and applied to both live tenant databases. Stage 6
+(historical sales backfill) has been run against both tenants for 2026-05-01 → 2026-08-27.
 
 **Companion to** [`SPEC.md`](./SPEC.md) and
 [`INVOICE_TYPES_ANALYSIS.md`](./INVOICE_TYPES_ANALYSIS.md). Like
@@ -243,7 +243,7 @@ both tenants now report zero remaining `invoice_kind IS NULL` rows. Resulting di
 parkowa VAT 228 / KOR 20 / ROZ 1; portowa VAT 504 / KOR 26. `pnpm test` 235/235 (8 new),
 `pnpm run typecheck` clean.
 
-### Step 3 — Sync
+### Step 3 — Sync ✅ complete (2026-08-27)
 
 - [`src/ksef/invoices.ts`](../src/ksef/invoices.ts): take the subject type as a parameter.
 - [`src/sync.ts`](../src/sync.ts): accept a direction, map it to a subject type, use that
@@ -254,7 +254,11 @@ parkowa VAT 228 / KOR 20 / ROZ 1; portowa VAT 504 / KOR 26. `pnpm test` 235/235 
 - [`src/db/sync-runs.ts`](../src/db/sync-runs.ts): record the subject type.
 - Categorization bypass per §4.2.
 
-### Step 4 — API
+Implemented as specified; sales invoices skip `categorize()` entirely and land with
+`categorizationConfidence: "not_applicable"` and `categoryId: null`. Each direction keeps
+its own continuation point in `sync_state`, verified independent in tests.
+
+### Step 4 — API ✅ complete (2026-08-27)
 
 - `GET /invoices` accepts a validated `direction` query parameter.
 - `POST /sync` accepts a `direction` body field, one direction per call (§4.3).
@@ -262,7 +266,10 @@ parkowa VAT 228 / KOR 20 / ROZ 1; portowa VAT 504 / KOR 26. `pnpm test` 235/235 
   requested direction.
 - `GET /sync/runs` surfaces the subject type.
 
-### Step 5 — UI
+Implemented as specified, including validation rejecting an invalid `direction` on both
+routes.
+
+### Step 5 — UI ✅ complete (2026-08-27)
 
 - [`web/src/api/client.ts`](../web/src/api/client.ts): direction parameter and a `direction`
   field on the `Invoice` type.
@@ -275,10 +282,52 @@ parkowa VAT 228 / KOR 20 / ROZ 1; portowa VAT 504 / KOR 26. `pnpm test` 235/235 
 - [`web/src/components/SyncButton.tsx`](../web/src/components/SyncButton.tsx):
   direction-aware trigger.
 
+Implemented as specified. `InvoicesSummary.tsx` needed no change — it already recomputes
+from whatever `invoices` array it's given, so the direction filter upstream is sufficient.
+Backend `pnpm test` 247/247, frontend `pnpm --dir web test` 49/49, both typecheck and
+`pnpm run lint` clean (Stages 3–5 committed as `ef30f96`, `66113da`, `64d860d`).
+
 ### Step 6 — Historical sales backfill
 
 Windowed pulls, one direction at a time, respecting the 20/hour export-init budget. Run by
 a human against real tenants after Step 5 ships.
+
+[`src/tools/backfill-sales.ts`](../src/tools/backfill-sales.ts) (`pnpm run backfill:sales`)
+drives this: it repeatedly calls `syncPurchaseInvoices(..., { direction: "sales" })` against
+the live database named by `DATABASE_PATH`/`.env`, recording a `sync_runs` row per call
+(mirroring `POST /sync`'s bookkeeping exactly). One tenant per invocation — `.env` selects
+which.
+
+**Three things discovered only by running this live, none previously documented:**
+
+1. **KSeF's export query rejects a `filters.dateRange` wider than 3 months** — surfaces as
+   a client-side `KsefValidationError` ( `Invoice query filters.dateRange cannot exceed 3
+   months.` ) before any HTTP request is made, so it costs no export-init quota. Any window
+   wider than 3 months must be split into ≤3-month chunks run as separate invocations.
+2. **A `windowTo` at or after today never lets `hasMore` become false.** The continuation
+   point KSeF returns is a "caught up as of now" watermark, not tied to query content, so
+   for a live/ongoing window the loop's own stop condition never fires and it always hits
+   the safety cap. Don't rely on `hasMore` to know when a backfill chunk is done — trust
+   `fetchedCount`/`insertedCount` for that, and pass `BACKFILL_MAX_CALLS=1` per chunk.
+3. **A stored continuation point from an unrelated prior sync silently overrides
+   `windowFrom`** whenever it falls inside `[windowFrom, windowTo]` (the rule documented in
+   [`SYNC_CONTINUATION_POINT_ANALYSIS.md`](./SYNC_CONTINUATION_POINT_ANALYSIS.md) §3.1) —
+   with no error, it just silently skips the older history. Set
+   `BACKFILL_RESET_CONTINUATION=true` before any deliberate backfill into a range that
+   might already have a continuation point.
+
+**Run log** (each row is one `BACKFILL_RESET_CONTINUATION=true BACKFILL_MAX_CALLS=1` chunk):
+
+| Date | Tenant | Window | Result |
+| --- | --- | --- | --- |
+| 2026-08-27 | portowa | 2026-05-01 → 2026-06-30 | 18 fetched / 18 inserted / 0 duplicate |
+| 2026-08-27 | portowa | 2026-07-01 → 2026-08-27 | 20 fetched / 19 inserted / 1 duplicate |
+| 2026-08-27 | parkowa | 2026-05-01 → 2026-06-30 | 0 fetched / 0 inserted / 0 duplicate |
+| 2026-08-27 | parkowa | 2026-07-01 → 2026-08-27 | 4 fetched / 4 inserted / 0 duplicate |
+
+Final state: portowa has 40 sales invoices (2026-04-20 → 2026-08-27, including 3 from an
+earlier ad hoc test sync); parkowa has 4 (2026-07-06 → 2026-07-28). Both verified directly
+against the live databases after the run.
 
 ---
 
