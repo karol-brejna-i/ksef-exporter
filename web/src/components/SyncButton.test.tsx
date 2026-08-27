@@ -21,6 +21,7 @@ describe("SyncButton", () => {
       "jwt-token",
       expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
       expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      "purchase",
     );
     expect(await screen.findByText("Synced 5 invoice(s).")).toBeInTheDocument();
     expect(onSynced).toHaveBeenCalled();
@@ -40,7 +41,12 @@ describe("SyncButton", () => {
     await user.type(toInput, "2025-03-31");
     await user.click(screen.getByRole("button", { name: /import invoices/i }));
 
-    expect(apiClient.triggerSync).toHaveBeenCalledWith("jwt-token", "2025-01-01", "2025-03-31");
+    expect(apiClient.triggerSync).toHaveBeenCalledWith(
+      "jwt-token",
+      "2025-01-01",
+      "2025-03-31",
+      "purchase",
+    );
     expect(await screen.findByText("Synced 2 invoice(s).")).toBeInTheDocument();
   });
 
@@ -75,5 +81,20 @@ describe("SyncButton", () => {
 
     expect(await screen.findByText("rate limited, retry later")).toBeInTheDocument();
     expect(onSynced).not.toHaveBeenCalled();
+  });
+
+  it("passes the direction prop through to triggerSync", async () => {
+    vi.spyOn(apiClient, "triggerSync").mockResolvedValue({ syncRunId: 1, invoiceCount: 0 });
+    const user = userEvent.setup();
+
+    render(<SyncButton token="jwt-token" onSynced={vi.fn()} direction="sales" />);
+    await user.click(screen.getByRole("button", { name: /import invoices/i }));
+
+    expect(apiClient.triggerSync).toHaveBeenCalledWith(
+      "jwt-token",
+      expect.any(String),
+      expect.any(String),
+      "sales",
+    );
   });
 });

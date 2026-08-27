@@ -54,6 +54,7 @@ describe("RecentImports", () => {
           retryAfterSeconds: null,
           itemsInsertedCount: 42,
           itemsFailedCount: 0,
+          subjectType: null,
         },
         {
           id: 2,
@@ -81,6 +82,7 @@ describe("RecentImports", () => {
           retryAfterSeconds: 3120,
           itemsInsertedCount: null,
           itemsFailedCount: null,
+          subjectType: null,
         },
         {
           id: 3,
@@ -108,6 +110,7 @@ describe("RecentImports", () => {
           retryAfterSeconds: null,
           itemsInsertedCount: null,
           itemsFailedCount: null,
+          subjectType: null,
         },
       ],
     });
@@ -175,6 +178,7 @@ describe("RecentImports", () => {
           retryAfterSeconds: null,
           itemsInsertedCount: 123,
           itemsFailedCount: 2,
+          subjectType: null,
         },
       ],
     });
@@ -220,6 +224,7 @@ describe("RecentImports", () => {
           retryAfterSeconds: null,
           itemsInsertedCount: null,
           itemsFailedCount: null,
+          subjectType: null,
         },
       ],
     });
@@ -267,6 +272,7 @@ describe("RecentImports", () => {
           retryAfterSeconds: null,
           itemsInsertedCount: null,
           itemsFailedCount: null,
+          subjectType: null,
         },
       ],
     });

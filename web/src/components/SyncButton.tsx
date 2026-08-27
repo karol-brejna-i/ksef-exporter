@@ -1,9 +1,11 @@
 import { type ChangeEvent, useState } from "react";
-import { ApiError, triggerSync } from "../api/client";
+import { ApiError, type InvoiceDirection, triggerSync } from "../api/client";
 
 export interface SyncButtonProps {
   token: string;
   onSynced: () => void;
+  /** Which direction to sync. Defaults to "purchase" for existing callers. */
+  direction?: InvoiceDirection;
 }
 
 /** First and last calendar day of the current month, as ISO date strings. */
@@ -15,7 +17,7 @@ function currentMonthWindow(): { windowFrom: string; windowTo: string } {
   return { windowFrom: isoDate(from), windowTo: isoDate(to) };
 }
 
-export function SyncButton({ token, onSynced }: SyncButtonProps) {
+export function SyncButton({ token, onSynced, direction = "purchase" }: SyncButtonProps) {
   // Defaults to the current month, but editable -- lets the owner import an
   // arbitrary range (e.g. to backfill a missed month) instead of only ever
   // being able to fetch "this month".
@@ -35,7 +37,7 @@ export function SyncButton({ token, onSynced }: SyncButtonProps) {
     setSyncing(true);
     setStatus(null);
     try {
-      const result = await triggerSync(token, windowFrom, windowTo);
+      const result = await triggerSync(token, windowFrom, windowTo, direction);
       const moreHint = result.hasMore
         ? " More invoices are available in this window \u2014 click Import again to continue."
         : "";

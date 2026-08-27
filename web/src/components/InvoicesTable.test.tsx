@@ -18,6 +18,7 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
   return {
     id: 1,
     source: "ksef",
+    direction: "purchase",
     ksefNumber: "5265877635-20250115-123456789012-01",
     invoiceNumber: "FV/1",
     sellerNip: "5265877635",
@@ -63,6 +64,27 @@ describe("InvoicesTable", () => {
     expect(screen.getByText("Energa Operator")).toBeInTheDocument();
     expect(screen.getByText("123.45 PLN")).toBeInTheDocument();
     expect(screen.getByLabelText("Category for Energa Operator")).toHaveValue("1");
+  });
+
+  it("shows no category select or correction control on a sales row", () => {
+    render(
+      <InvoicesTable
+        invoices={[
+          invoice({
+            direction: "sales",
+            categorizationConfidence: "not_applicable",
+            categoryId: null,
+          }),
+        ]}
+        categories={categories}
+        token="jwt-token"
+        onCorrected={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Category for Energa Operator")).not.toBeInTheDocument();
+    expect(screen.getByText("Sales (not categorized)")).toBeInTheDocument();
+    expect(screen.getByText("Sales (not categorized)").closest("tr")).toHaveClass("sales");
   });
 
   it("visually distinguishes needs_review rows from matched rows", () => {

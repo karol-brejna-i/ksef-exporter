@@ -118,7 +118,11 @@ export function InvoicesTable({ invoices, categories, token, onCorrected }: Invo
               <tr
                 key={invoice.id}
                 className={
-                  invoice.categorizationConfidence === "needs_review" ? "needs-review" : "matched"
+                  invoice.direction === "sales"
+                    ? "sales"
+                    : invoice.categorizationConfidence === "needs_review"
+                      ? "needs-review"
+                      : "matched"
                 }
               >
                 <td>{invoice.issueDate}</td>
@@ -127,26 +131,32 @@ export function InvoicesTable({ invoices, categories, token, onCorrected }: Invo
                   {invoice.grossTotal.toFixed(2)} {invoice.currency}
                 </td>
                 <td>
-                  <select
-                    aria-label={`Category for ${invoice.sellerName}`}
-                    value={invoice.categoryId ?? UNCATEGORIZED}
-                    disabled={correctingId === invoice.id}
-                    onChange={(event) => void handleCategoryChange(invoice.id, event)}
-                  >
-                    <option value={UNCATEGORIZED} disabled>
-                      —
-                    </option>
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
+                  {invoice.direction === "sales" ? (
+                    "—"
+                  ) : (
+                    <select
+                      aria-label={`Category for ${invoice.sellerName}`}
+                      value={invoice.categoryId ?? UNCATEGORIZED}
+                      disabled={correctingId === invoice.id}
+                      onChange={(event) => void handleCategoryChange(invoice.id, event)}
+                    >
+                      <option value={UNCATEGORIZED} disabled>
+                        —
                       </option>
-                    ))}
-                  </select>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </td>
                 <td>
-                  {invoice.categorizationConfidence === "needs_review"
-                    ? "Needs review"
-                    : "Confident"}
+                  {invoice.direction === "sales"
+                    ? "Sales (not categorized)"
+                    : invoice.categorizationConfidence === "needs_review"
+                      ? "Needs review"
+                      : "Confident"}
                   {invoice.itemsExtractedAt === null ? (
                     <div style={{ color: "gray" }}>Items not extracted yet</div>
                   ) : invoice.itemCount === 0 ? (

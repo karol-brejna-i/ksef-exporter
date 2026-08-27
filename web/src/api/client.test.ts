@@ -81,7 +81,11 @@ describe("api client", () => {
       "/api/sync",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ windowFrom: "2025-01-01", windowTo: "2025-01-31" }),
+        body: JSON.stringify({
+          windowFrom: "2025-01-01",
+          windowTo: "2025-01-31",
+          direction: "purchase",
+        }),
       }),
     );
   });

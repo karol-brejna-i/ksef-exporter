@@ -7,6 +7,7 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
   return {
     id: 1,
     source: "ksef",
+    direction: "purchase",
     ksefNumber: "5265877635-20250115-123456789012-01",
     invoiceNumber: "FV/1",
     sellerNip: "5265877635",

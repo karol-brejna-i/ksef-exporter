@@ -13,11 +13,15 @@ export interface Category {
   name: string;
 }
 
-export type CategorizationConfidence = "matched" | "needs_review";
+export type CategorizationConfidence = "matched" | "needs_review" | "not_applicable";
+
+/** "purchase" (KSeF Subject2, tenant is the buyer) or "sales" (Subject1, tenant is the seller). */
+export type InvoiceDirection = "purchase" | "sales";
 
 export interface Invoice {
   id: number;
   source: "ksef" | "manual";
+  direction: InvoiceDirection;
   ksefNumber: string | null;
   invoiceNumber: string;
   sellerNip: string | null;
@@ -91,6 +95,8 @@ export interface SyncRun {
   retryAfterSeconds: number | null;
   itemsInsertedCount: number | null;
   itemsFailedCount: number | null;
+  /** KSeF subject type the run synced; null on rows predating sales ingestion. */
+  subjectType: "Subject1" | "Subject2" | null;
 }
 
 /**
@@ -122,8 +128,12 @@ export function login(username: string, password: string): Promise<{ token: stri
   });
 }
 
-export function fetchInvoices(token: string): Promise<{ invoices: Invoice[] }> {
-  return request("/invoices", {}, token);
+export function fetchInvoices(
+  token: string,
+  direction?: InvoiceDirection,
+): Promise<{ invoices: Invoice[] }> {
+  const query = direction ? `?direction=${direction}` : "";
+  return request(`/invoices${query}`, {}, token);
 }
 
 export function fetchCategories(token: string): Promise<{ categories: Category[] }> {
@@ -134,10 +144,11 @@ export function triggerSync(
   token: string,
   windowFrom: string,
   windowTo: string,
+  direction: InvoiceDirection = "purchase",
 ): Promise<{ syncRunId: number; invoiceCount: number; hasMore?: boolean }> {
   return request(
     "/sync",
-    { method: "POST", body: JSON.stringify({ windowFrom, windowTo }) },
+    { method: "POST", body: JSON.stringify({ windowFrom, windowTo, direction }) },
     token,
   );
 }

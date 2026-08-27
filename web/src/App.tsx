@@ -5,6 +5,7 @@ import {
   fetchCategories,
   fetchInvoices,
   type Invoice,
+  type InvoiceDirection,
 } from "./api/client";
 import { InvoicesSummary } from "./components/InvoicesSummary";
 import { InvoicesTable } from "./components/InvoicesTable";
@@ -29,15 +30,19 @@ export function App() {
   // always tell what's already there instead of only ever seeing an
   // import button (see design/SPEC.md §2.1 UX principle).
   const [screen, setScreen] = useState<Screen>("invoices");
+  // Which direction the Invoices screen shows and Import will sync. Shared
+  // across both screens so switching it on Invoices also changes what the
+  // next Import click pulls (design/SALES_INVOICES_PLAN.md Step 5).
+  const [direction, setDirection] = useState<InvoiceDirection>("purchase");
   // Bumped on every successful sync trigger so RecentImports (rendered on
   // the Import screen) refetches its history without a full page reload.
   const [importRefreshKey, setImportRefreshKey] = useState(0);
 
-  const loadData = useCallback(async (authToken: string): Promise<void> => {
+  const loadData = useCallback(async (authToken: string, dir: InvoiceDirection): Promise<void> => {
     setLoading(true);
     try {
       const [invoicesResult, categoriesResult] = await Promise.all([
-        fetchInvoices(authToken),
+        fetchInvoices(authToken, dir),
         fetchCategories(authToken),
       ]);
       setInvoices(invoicesResult.invoices);
@@ -52,9 +57,9 @@ export function App() {
 
   useEffect(() => {
     if (token) {
-      void loadData(token);
+      void loadData(token, direction);
     }
-  }, [token, loadData]);
+  }, [token, direction, loadData]);
 
   function handleCorrected(updated: Invoice): void {
     setInvoices((current) =>
@@ -66,7 +71,7 @@ export function App() {
     if (!token) {
       return;
     }
-    void loadData(token);
+    void loadData(token, direction);
     setImportRefreshKey((key) => key + 1);
   }
 
@@ -96,6 +101,22 @@ export function App() {
       {error && <p role="alert">{error}</p>}
       {screen === "invoices" ? (
         <section aria-label="Invoices">
+          <fieldset aria-label="Direction">
+            <button
+              type="button"
+              aria-pressed={direction === "purchase"}
+              onClick={() => setDirection("purchase")}
+            >
+              Purchases
+            </button>
+            <button
+              type="button"
+              aria-pressed={direction === "sales"}
+              onClick={() => setDirection("sales")}
+            >
+              Sales
+            </button>
+          </fieldset>
           <InvoicesSummary invoices={invoices} />
           {loading ? (
             <p>Loading invoices…</p>
@@ -110,7 +131,7 @@ export function App() {
         </section>
       ) : (
         <section aria-label="Import">
-          <SyncButton token={token} onSynced={handleSynced} />
+          <SyncButton token={token} onSynced={handleSynced} direction={direction} />
           <RecentImports token={token} refreshKey={importRefreshKey} />
         </section>
       )}
