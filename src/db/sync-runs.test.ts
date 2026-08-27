@@ -187,4 +187,19 @@ describe("sync-runs repository", () => {
     expect(run.requestedAt).toBeInstanceOf(Date);
     expect(run.requestedAt.getTime()).toBeGreaterThan(0);
   });
+
+  it("records the subject type a run synced, defaulting to null when omitted", async () => {
+    const withSubjectType = await createSyncRun(db, {
+      windowFrom: "2025-01-01",
+      windowTo: "2025-01-31",
+      subjectType: "Subject1",
+    });
+    const withoutSubjectType = await createSyncRun(db, {
+      windowFrom: "2025-01-01",
+      windowTo: "2025-01-31",
+    });
+
+    expect(withSubjectType.subjectType).toBe("Subject1");
+    expect(withoutSubjectType.subjectType).toBeNull();
+  });
 });

@@ -209,4 +209,43 @@ describe("invoices repository", () => {
     expect(mediaOnly).toHaveLength(1);
     expect(mediaOnly[0]?.id).toBe(first.id);
   });
+
+  it("defaults an inserted invoice's direction to 'purchase'", async () => {
+    const inserted = await insertKsefInvoiceIfNotExists(db, SAMPLE_KSEF_INVOICE);
+
+    expect(inserted.direction).toBe("purchase");
+  });
+
+  it("persists an explicit direction and categorizationConfidence override on insert", async () => {
+    const inserted = await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      direction: "sales",
+      categorizationConfidence: "not_applicable",
+    });
+
+    expect(inserted.direction).toBe("sales");
+    expect(inserted.categorizationConfidence).toBe("not_applicable");
+    expect(inserted.categoryId).toBeNull();
+  });
+
+  it("filters listed invoices by direction; no filter returns both", async () => {
+    await insertKsefInvoiceIfNotExists(db, SAMPLE_KSEF_INVOICE);
+    await insertKsefInvoiceIfNotExists(db, {
+      ...SAMPLE_KSEF_INVOICE,
+      ksefNumber: "5265877635-20250215-123456789012-02",
+      issueDate: "2025-02-15",
+      direction: "sales",
+      categorizationConfidence: "not_applicable",
+    });
+
+    const purchasesOnly = await listInvoices(db, { direction: "purchase" });
+    const salesOnly = await listInvoices(db, { direction: "sales" });
+    const both = await listInvoices(db);
+
+    expect(purchasesOnly).toHaveLength(1);
+    expect(purchasesOnly[0]?.direction).toBe("purchase");
+    expect(salesOnly).toHaveLength(1);
+    expect(salesOnly[0]?.direction).toBe("sales");
+    expect(both).toHaveLength(2);
+  });
 });

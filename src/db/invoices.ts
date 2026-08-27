@@ -57,6 +57,10 @@ export interface NewKsefInvoice {
   grossTotal: number;
   currency: string;
   rawXml: string;
+  /** Defaults to "purchase" (the schema default) when omitted. */
+  direction?: InvoiceDirection;
+  /** Sales invoices are never categorized; sync.ts sets this to "not_applicable" for them. */
+  categorizationConfidence?: CategorizationConfidence;
 }
 
 export interface NewManualInvoice {
@@ -120,10 +124,15 @@ export interface ListInvoicesFilter {
   /** "YYYY-MM"; matches invoices whose issueDate falls in that month. */
   month?: string | undefined;
   categoryId?: number | undefined;
+  /** No filter (the default) returns both directions. */
+  direction?: InvoiceDirection | undefined;
 }
 
 export async function listInvoices(db: Db, filter: ListInvoicesFilter = {}): Promise<InvoiceRow[]> {
   const conditions = [];
+  if (filter.direction !== undefined) {
+    conditions.push(eq(invoices.direction, filter.direction));
+  }
   if (filter.month) {
     // String comparison is correct here: both sides are zero-padded YYYY-MM-DD civil dates of identical shape.
     const [year, month] = filter.month.split("-");

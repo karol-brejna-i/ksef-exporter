@@ -4,6 +4,7 @@ import type { Db } from "./db/client.js";
 import { replaceInvoiceItems } from "./db/invoice-items.js";
 import {
   getInvoiceByKsefNumber,
+  type InvoiceDirection,
   type InvoiceRow,
   insertKsefInvoiceIfNotExists,
   updateInvoiceCategory,
@@ -19,8 +20,11 @@ import {
   dateStartMs,
 } from "./time.js";
 
-/** KSeF's buyer role (see design/SPEC.md §3); Parkowa only pulls its purchases. */
-const SUBJECT_TYPE = "Subject2";
+/** KSeF subject type per direction (see design/SALES_INVOICES_PLAN.md §4). */
+export const SUBJECT_TYPE_BY_DIRECTION: Record<InvoiceDirection, "Subject1" | "Subject2"> = {
+  purchase: "Subject2",
+  sales: "Subject1",
+};
 
 export interface SyncPurchaseInvoicesOptions {
   windowFrom: string;
@@ -36,6 +40,12 @@ export interface SyncPurchaseInvoicesOptions {
    * true, call sync again to continue from the persisted continuation point.
    */
   maxIterations?: number;
+  /**
+   * "purchase" (Subject2) or "sales" (Subject1). Defaults to "purchase" --
+   * unchanged behavior for existing callers. Each call syncs exactly one
+   * direction, keyed to its own continuation point in `sync_state`.
+   */
+  direction?: InvoiceDirection;
 }
 
 export interface SyncPurchaseInvoicesResult {
@@ -151,8 +161,10 @@ export async function syncPurchaseInvoices(
   const logger = deps.logger ?? noopLogger;
   const now = deps.now ?? Date.now;
   const maxIterations = options.maxIterations ?? 1;
+  const direction = options.direction ?? "purchase";
+  const subjectType = SUBJECT_TYPE_BY_DIRECTION[direction];
 
-  const storedContinuationPoint = await getContinuationPoint(db, SUBJECT_TYPE);
+  const storedContinuationPoint = await getContinuationPoint(db, subjectType);
   // The SDK queries `from: continuationPoint ?? windowFrom`, so the stored point
   // is only applied when it lies inside the requested window. A point past
   // windowTo (backfilling an earlier period) would build an invalid `from > to`
@@ -175,7 +187,7 @@ export async function syncPurchaseInvoices(
       ? storedContinuationPoint
       : null;
   const continuationPoints: ContinuationPoints =
-    appliedContinuationPoint != null ? { [SUBJECT_TYPE]: appliedContinuationPoint } : {};
+    appliedContinuationPoint != null ? { [subjectType]: appliedContinuationPoint } : {};
   const effectiveFrom = appliedContinuationPoint ?? options.windowFrom;
 
   if (storedContinuationPoint != null && appliedContinuationPoint === null) {
@@ -206,13 +218,14 @@ export async function syncPurchaseInvoices(
     windowFrom: options.windowFrom,
     windowTo: options.windowTo,
     continuationPoints,
+    subjectType,
     maxIterations,
   });
   logger.info("sync.fetch.completed", {
     durationMs: now() - fetchStartedAt,
     fetchedCount: fetchResult.invoices.length,
     referenceCount: fetchResult.referenceNumbers.length,
-    continuationAfterFetch: fetchResult.continuationPoints[SUBJECT_TYPE] ?? null,
+    continuationAfterFetch: fetchResult.continuationPoints[subjectType] ?? null,
   });
 
   logger.info("sync.persist.started", { fetchedCount: fetchResult.invoices.length });
@@ -230,7 +243,13 @@ export async function syncPurchaseInvoices(
   let categorizedCount = 0;
   for (const invoice of fetchResult.invoices) {
     const existing = await getInvoiceByKsefNumber(db, invoice.ksefNumber);
-    const row = await insertKsefInvoiceIfNotExists(db, invoice);
+    const row = await insertKsefInvoiceIfNotExists(db, {
+      ...invoice,
+      direction,
+      // Sales invoices bypass categorization entirely (design/SALES_INVOICES_PLAN.md
+      // §4.2): without this, every one would land in the owner's review queue.
+      ...(direction === "sales" ? { categorizationConfidence: "not_applicable" as const } : {}),
+    });
     if (existing) {
       duplicateCount++;
       logger.info("sync.persist.duplicate", {
@@ -254,6 +273,11 @@ export async function syncPurchaseInvoices(
     // touching KSeF (design/INVOICE_ITEMS_PLAN.md §6.1/§6.3).
     if (row.itemsExtractedAt === null) {
       itemsPending.push({ row, items: invoice.items });
+    }
+
+    if (direction === "sales") {
+      invoices.push(row);
+      continue;
     }
 
     const isUncategorized =
@@ -321,7 +345,7 @@ export async function syncPurchaseInvoices(
     extractedInvoiceCount: itemsPending.length - itemsFailedCount,
   });
 
-  const newContinuationPoint = fetchResult.continuationPoints[SUBJECT_TYPE];
+  const newContinuationPoint = fetchResult.continuationPoints[subjectType];
   // Monotonic: a backfill of an earlier period must not rewind the high-water
   // mark, or the next incremental sync re-downloads everything since then and
   // burns the tight export-init quota.
@@ -330,7 +354,7 @@ export async function syncPurchaseInvoices(
     newContinuationPoint ?? null,
     logger,
   );
-  await setContinuationPoint(db, SUBJECT_TYPE, persistedContinuationPoint);
+  await setContinuationPoint(db, subjectType, persistedContinuationPoint);
   const newContinuationMs = continuationPointMs(newContinuationPoint ?? null, logger);
   const hasMore = newContinuationMs !== null && newContinuationMs < windowEndExclusiveMs;
   const needsReviewCount = invoices.filter(

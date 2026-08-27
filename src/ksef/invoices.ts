@@ -3,7 +3,9 @@ import { type PurchaseInvoiceRecord, parsePurchaseInvoiceXml } from "./invoice-p
 
 /**
  * "Subject2" is the buyer role in KSeF's model (see design/SPEC.md §3).
- * Parkowa is always the buyer for the purchase invoices this app pulls.
+ * Default when the caller doesn't specify one -- keeps existing purchase-only
+ * callers unchanged. "Subject1" (seller role) is used for sales invoices
+ * (see design/SALES_INVOICES_PLAN.md).
  */
 const PURCHASE_INVOICE_SUBJECT_TYPE = "Subject2";
 
@@ -17,6 +19,8 @@ export interface FetchPurchaseInvoicesOptions {
    * type), as returned by a previous call. Pass `{}` for a first-ever sync.
    */
   continuationPoints: ContinuationPoints;
+  /** KSeF subject type to query. Defaults to "Subject2" (buyer/purchases). */
+  subjectType?: string;
   /** Safety cap on how many export iterations a single call may perform. */
   maxIterations?: number;
   pollIntervalMs?: number;
@@ -46,7 +50,7 @@ export async function fetchPurchaseInvoices(
   options: FetchPurchaseInvoicesOptions,
 ): Promise<FetchPurchaseInvoicesResult> {
   const result: IncrementalExportResult = await client.workflows.exportsIncremental.run({
-    subjectType: PURCHASE_INVOICE_SUBJECT_TYPE,
+    subjectType: options.subjectType ?? PURCHASE_INVOICE_SUBJECT_TYPE,
     windowFrom: options.windowFrom,
     windowTo: options.windowTo,
     continuationPoints: options.continuationPoints,

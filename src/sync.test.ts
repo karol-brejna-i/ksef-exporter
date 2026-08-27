@@ -980,4 +980,98 @@ describe("syncPurchaseInvoices", () => {
 
     sqlite.close();
   });
+
+  it("defaults to purchase direction, querying Subject2 and persisting direction='purchase'", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = vi.fn(
+      async (): Promise<FetchPurchaseInvoicesResult> => ({
+        invoices: [record()],
+        continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+        referenceNumbers: ["ref-1"],
+      }),
+    );
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    expect(fetchInvoices).toHaveBeenCalledWith(
+      fakeClient(),
+      expect.objectContaining({ subjectType: "Subject2" }),
+    );
+    expect(result.invoices[0]?.direction).toBe("purchase");
+
+    sqlite.close();
+  });
+
+  it("requests Subject1 for direction='sales' and bypasses categorization entirely", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = vi.fn(
+      async (): Promise<FetchPurchaseInvoicesResult> => ({
+        invoices: [record()],
+        continuationPoints: { Subject1: "2025-01-31T00:00:00Z" },
+        referenceNumbers: ["ref-1"],
+      }),
+    );
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31", direction: "sales" },
+      { fetchInvoices },
+    );
+
+    expect(fetchInvoices).toHaveBeenCalledWith(
+      fakeClient(),
+      expect.objectContaining({ subjectType: "Subject1" }),
+    );
+    expect(result.invoices[0]?.direction).toBe("sales");
+    expect(result.invoices[0]?.categorizationConfidence).toBe("not_applicable");
+    expect(result.invoices[0]?.categoryId).toBeNull();
+    expect(result.diagnostics.categorizedCount).toBe(0);
+    expect(result.diagnostics.needsReviewCount).toBe(0);
+
+    sqlite.close();
+  });
+
+  it("keeps purchase and sales continuation points independent in sync_state", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchPurchases = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: [],
+    });
+    const fetchSales = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject1: "2025-01-20T00:00:00Z" },
+      referenceNumbers: [],
+    });
+
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices: fetchPurchases },
+    );
+    await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31", direction: "sales" },
+      { fetchInvoices: fetchSales },
+    );
+
+    expect(await getContinuationPoint(db, "Subject2")).toBe("2025-01-31T00:00:00Z");
+    expect(await getContinuationPoint(db, "Subject1")).toBe("2025-01-20T00:00:00Z");
+
+    sqlite.close();
+  });
 });

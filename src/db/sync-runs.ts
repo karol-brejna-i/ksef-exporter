@@ -3,6 +3,8 @@ import type { Db } from "./client.js";
 import { syncRuns } from "./schema.js";
 
 export type SyncRunStatus = "running" | "success" | "error";
+/** KSeF subject type the run synced; NULL on rows predating sales ingestion. */
+export type SyncRunSubjectType = "Subject1" | "Subject2";
 
 export interface SyncRun {
   id: number;
@@ -10,6 +12,7 @@ export interface SyncRun {
   startedAt: Date | null;
   completedAt: Date | null;
   durationMs: number | null;
+  subjectType: SyncRunSubjectType | null;
   windowFrom: string;
   windowTo: string;
   status: SyncRunStatus;
@@ -40,6 +43,7 @@ export interface CreateSyncRunInput {
   startedAt?: Date;
   continuationBefore?: string | null;
   maxIterations?: number;
+  subjectType?: SyncRunSubjectType;
 }
 
 export interface SyncRunSuccessDiagnostics {
@@ -87,6 +91,7 @@ export async function createSyncRun(db: Db, input: CreateSyncRunInput): Promise<
       startedAt: input.startedAt,
       continuationBefore: input.continuationBefore,
       maxIterations: input.maxIterations,
+      subjectType: input.subjectType,
     })
     .returning();
   if (!row) {

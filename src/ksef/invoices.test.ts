@@ -153,4 +153,22 @@ describe("fetchPurchaseInvoices", () => {
       }),
     );
   });
+
+  it("queries Subject1 when subjectType is passed explicitly (sales invoices)", async () => {
+    const { client, run } = fakeClient({
+      referenceNumbers: [],
+      metadataSummaries: [],
+      invoiceXmlFiles: {},
+      continuationPoints: {},
+    });
+
+    await fetchPurchaseInvoices(client, {
+      windowFrom: "2025-01-01",
+      windowTo: "2025-01-31",
+      continuationPoints: {},
+      subjectType: "Subject1",
+    });
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ subjectType: "Subject1" }));
+  });
 });
