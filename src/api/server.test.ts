@@ -189,6 +189,43 @@ describe("API server", () => {
       expect(response.statusCode).toBe(400);
     });
 
+    it("filters by direction; omitting it returns both directions", async () => {
+      await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      await insertKsefInvoiceIfNotExists(db, {
+        ...SAMPLE_INVOICE,
+        ksefNumber: "5265877635-20250215-123456789012-02",
+        direction: "sales",
+        categorizationConfidence: "not_applicable",
+      });
+      const token = await login();
+
+      const salesOnly = await fastify.inject({
+        method: "GET",
+        url: "/invoices?direction=sales",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const both = await fastify.inject({
+        method: "GET",
+        url: "/invoices",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect((salesOnly.json() as { invoices: unknown[] }).invoices).toHaveLength(1);
+      expect((both.json() as { invoices: unknown[] }).invoices).toHaveLength(2);
+    });
+
+    it("rejects an invalid direction query param with 400", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices?direction=bogus",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
     it("includes itemCount for each invoice", async () => {
       const invoice = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
       replaceInvoiceItems(db, invoice.id, [
@@ -453,6 +490,7 @@ describe("API server", () => {
         {
           windowFrom: "2025-01-01",
           windowTo: "2025-01-31",
+          direction: "purchase",
         },
         { logger: { info: expect.any(Function), warn: expect.any(Function) } },
       );
@@ -474,6 +512,52 @@ describe("API server", () => {
       });
 
       expect(response.json()).toEqual({ syncRunId: 1, invoiceCount: 1, hasMore: true });
+    });
+
+    it("passes the requested direction to sync and records the subject type on the run", async () => {
+      sync.mockResolvedValueOnce({
+        invoices: [],
+        hasMore: false,
+        diagnostics: EMPTY_DIAGNOSTICS,
+      });
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31", direction: "sales" },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(sync).toHaveBeenCalledWith(
+        db,
+        { workflows: {} },
+        { windowFrom: "2025-01-01", windowTo: "2025-01-31", direction: "sales" },
+        { logger: { info: expect.any(Function), warn: expect.any(Function) } },
+      );
+
+      const runsResponse = await fastify.inject({
+        method: "GET",
+        url: "/sync/runs",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const body = runsResponse.json() as { runs: Array<Record<string, unknown>> };
+      expect(body.runs[0]).toMatchObject({ subjectType: "Subject1" });
+    });
+
+    it("rejects an invalid direction with 400", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/sync",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { windowFrom: "2025-01-01", windowTo: "2025-01-31", direction: "bogus" },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(getClient).not.toHaveBeenCalled();
     });
 
     it("rejects a request missing windowFrom/windowTo with 400", async () => {

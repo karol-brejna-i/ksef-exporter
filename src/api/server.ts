@@ -23,7 +23,7 @@ import {
 } from "../db/sync-runs.js";
 import { getContinuationPoint } from "../db/sync-state.js";
 import { classifyKsefError } from "../ksef/rate-limit.js";
-import { syncPurchaseInvoices } from "../sync.js";
+import { SUBJECT_TYPE_BY_DIRECTION, syncPurchaseInvoices } from "../sync.js";
 import { isIsoDate } from "../time.js";
 import { verifyCredentials } from "./auth.js";
 
@@ -64,6 +64,9 @@ const syncBodySchema = z
       .string()
       .min(1)
       .refine(isIsoDate, "windowTo must be a valid date formatted as YYYY-MM-DD"),
+    // One direction per call (design/SALES_INVOICES_PLAN.md §4.3); defaults to
+    // "purchase" so existing callers keep syncing purchases unchanged.
+    direction: z.enum(["purchase", "sales"]).default("purchase"),
   })
   // String comparison is correct here and only here: both are zero-padded civil
   // dates of identical shape, so lexicographic order is calendar order.
@@ -77,6 +80,7 @@ const invoiceQuerySchema = z.object({
     .regex(/^\d{4}-\d{2}$/, "month must be formatted as YYYY-MM")
     .optional(),
   categoryId: z.coerce.number().int().positive().optional(),
+  direction: z.enum(["purchase", "sales"]).optional(),
 });
 
 const invoiceIdParamsSchema = z.object({
@@ -151,12 +155,15 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
     }
 
     const startedAtMs = now();
-    const continuationBefore = await getContinuationPoint(deps.db, "Subject2");
+    const { direction, ...window } = parsed.data;
+    const subjectType = SUBJECT_TYPE_BY_DIRECTION[direction];
+    const continuationBefore = await getContinuationPoint(deps.db, subjectType);
     const run = await createSyncRun(deps.db, {
-      ...parsed.data,
+      ...window,
       startedAt: new Date(startedAtMs),
       continuationBefore: continuationBefore ?? null,
       maxIterations: 1,
+      subjectType,
     });
     const syncLog = request.log.child({ syncRunId: run.id });
     let stage = "start";
@@ -166,15 +173,20 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
     };
     const warn = (event: string, meta: Record<string, unknown> = {}) =>
       syncLog.warn({ event, ...meta }, event);
-    info("sync.started", { ...parsed.data, continuationBefore: continuationBefore ?? null });
+    info("sync.started", { ...window, direction, continuationBefore: continuationBefore ?? null });
     try {
       const clientStartedAt = now();
       info("sync.client.started");
       const client = await deps.getClient();
       info("sync.client.completed", { durationMs: now() - clientStartedAt });
-      const result = await sync(deps.db, client, parsed.data, {
-        logger: { info, warn },
-      });
+      const result = await sync(
+        deps.db,
+        client,
+        { ...window, direction },
+        {
+          logger: { info, warn },
+        },
+      );
       const completedAtMs = now();
       const durationMs = completedAtMs - startedAtMs;
       await markSyncRunSuccess(deps.db, run.id, {
