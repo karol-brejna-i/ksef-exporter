@@ -64,6 +64,13 @@
       "when": 1787236241516,
       "tag": "0008_bent_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1787486453368,
+      "tag": "0009_hesitant_kat_farrell",
+      "breakpoints": true
     }
   ]
 }

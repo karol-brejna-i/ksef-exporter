@@ -35,8 +35,10 @@ export const categories = sqliteTable(
 );
 
 /**
- * Purchase invoices, from KSeF or manually entered (SPEC §2.5/§4: manual
+ * Invoices, from KSeF or manually entered (SPEC §2.5/§4: manual
  * entries are structurally similar, distinguished only by `source`).
+ * `direction` distinguishes purchases from sales; see
+ * design/SALES_INVOICES_PLAN.md.
  */
 export const invoices = sqliteTable(
   "invoices",
@@ -44,9 +46,26 @@ export const invoices = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     /** "ksef" (pulled via the KSeF sync) or "manual" (HU-02 exceptions). */
     source: text("source", { enum: ["ksef", "manual"] }).notNull(),
+    /**
+     * "purchase" (KSeF Subject2, tenant is the buyer) or "sales" (Subject1,
+     * tenant is the seller). Written from the subject type that fetched the
+     * invoice, never inferred by comparing NIPs. Defaults to "purchase" so
+     * every pre-existing row is correct without a data migration.
+     */
+    direction: text("direction", { enum: ["purchase", "sales"] })
+      .notNull()
+      .default("purchase"),
     /** Null for manual entries that have no KSeF number (e.g. foreign vendor). */
     ksefNumber: text("ksef_number"),
     invoiceNumber: text("invoice_number").notNull(),
+    /**
+     * Fa/RodzajFaktury. Nullable: manual entries have none, and KSeF rows are
+     * backfilled from raw_xml separately so a backfill bug cannot block the
+     * migration.
+     */
+    invoiceKind: text("invoice_kind", {
+      enum: ["VAT", "KOR", "ZAL", "ROZ", "UPR", "KOR_ZAL", "KOR_ROZ"],
+    }),
     sellerNip: text("seller_nip"),
     sellerName: text("seller_name").notNull(),
     buyerNip: text("buyer_nip"),
@@ -68,9 +87,11 @@ export const invoices = sqliteTable(
     /**
      * "matched": a Tier-1 rule confidently assigned the category (SPEC §4).
      * "needs_review": no rule matched; awaiting human confirmation (HU-03).
+     * "not_applicable": sales invoices, which are never categorized — without
+     * this value they would all land in the owner's review queue.
      */
     categorizationConfidence: text("categorization_confidence", {
-      enum: ["matched", "needs_review"],
+      enum: ["matched", "needs_review", "not_applicable"],
     })
       .notNull()
       .default("needs_review"),
@@ -89,9 +110,14 @@ export const invoices = sqliteTable(
       sql`${table.issueDate} GLOB ${ISO_DATE_GLOB} AND ${table.issueDate} IS date(${table.issueDate})`,
     ),
     check("invoices_source_enum", sql`${table.source} IN ('ksef', 'manual')`),
+    check("invoices_direction_enum", sql`${table.direction} IN ('purchase', 'sales')`),
+    check(
+      "invoices_invoice_kind_enum",
+      sql`${table.invoiceKind} IS NULL OR ${table.invoiceKind} IN ('VAT', 'KOR', 'ZAL', 'ROZ', 'UPR', 'KOR_ZAL', 'KOR_ROZ')`,
+    ),
     check(
       "invoices_confidence_enum",
-      sql`${table.categorizationConfidence} IN ('matched', 'needs_review')`,
+      sql`${table.categorizationConfidence} IN ('matched', 'needs_review', 'not_applicable')`,
     ),
     check("invoices_currency_iso", sql`${table.currency} GLOB '[A-Z][A-Z][A-Z]'`),
     check(
@@ -237,6 +263,12 @@ export const syncRuns = sqliteTable(
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     durationMs: integer("duration_ms"),
+    /**
+     * KSeF subject type this run synced. Nullable: rows written before sales
+     * ingestion existed genuinely predate the concept, and backfilling them to
+     * "Subject2" would assert knowledge we do not have.
+     */
+    subjectType: text("subject_type", { enum: ["Subject1", "Subject2"] }),
     windowFrom: text("window_from").notNull(),
     windowTo: text("window_to").notNull(),
     /** "running" until the sync call resolves, then "success" or "error". */
@@ -267,6 +299,10 @@ export const syncRuns = sqliteTable(
   },
   (table) => [
     check("sync_runs_status_enum", sql`${table.status} IN ('running', 'success', 'error')`),
+    check(
+      "sync_runs_subject_type_enum",
+      sql`${table.subjectType} IS NULL OR ${table.subjectType} IN ('Subject1', 'Subject2')`,
+    ),
     check("sync_runs_has_more_bool", sql`${table.hasMore} IS NULL OR ${table.hasMore} IN (0, 1)`),
     check(
       "sync_runs_window_from_iso",

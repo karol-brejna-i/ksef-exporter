@@ -6,6 +6,8 @@ export interface CategorizableInvoice {
   sellerName: string;
 }
 
+/** Narrower than the stored union in db/invoices.ts: the engine never yields
+ * "not_applicable", which only sales invoices carry. */
 export type CategorizationConfidence = "matched" | "needs_review";
 
 export interface CategorizationResult {
