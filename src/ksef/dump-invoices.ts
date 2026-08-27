@@ -1,13 +1,17 @@
 /**
  * Manual utility (NOT part of the automated test suite, real network calls,
- * real data) that dumps purchase invoices from a real KSeF environment
+ * real data) that dumps invoices from a real KSeF environment
  * (TEST/DEMO/PRD, per `KSEF_ENVIRONMENT`) to the local filesystem, so we
  * have a stable, offline sample of real-world invoice shapes to develop
  * and test against (e.g. parser edge cases like namespace-prefixed XML
  * that don't show up in hand-written fixtures).
  *
- * Writes to `data/invoices/` (gitignored -- this is real business data and
- * must never be committed):
+ * Defaults to purchases (`Subject2`). `DUMP_SUBJECT_TYPE=Subject1` dumps
+ * sales instead, into a separate directory so the two samples never
+ * overwrite each other.
+ *
+ * Writes to `data/invoices/` -- `data/invoices-sales/` for `Subject1` --
+ * (gitignored: this is real business data and must never be committed):
  *   - raw/<file-name>.xml   one file per invoice, exactly as received
  *   - metadata.json         the raw `_metadata.json` summaries for this run
  *   - parsed.json           this app's flat PurchaseInvoiceRecord for each
@@ -17,12 +21,14 @@
  * Each run starts a new KSeF export, which is subject to KSeF's own
  * server-side rate limit (see src/ksef/rate-limit.ts) -- avoid running this
  * back-to-back with other export-starting scripts (smoke:invoices,
- * dump:invoices) in a short window.
+ * dump:invoices) in a short window. The limit is per subject type, so a
+ * Subject1 run draws on its own budget rather than the purchase one.
  *
  * Usage:
  *   pnpm run dump:invoices                              # last 30 days
  *   DUMP_WINDOW_DAYS=90 pnpm run dump:invoices
  *   DUMP_WINDOW_FROM=2026-05-01 DUMP_WINDOW_TO=2026-06-01 pnpm run dump:invoices
+ *   DUMP_SUBJECT_TYPE=Subject1 DUMP_WINDOW_DAYS=7 pnpm run dump:invoices
  */
 import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -38,13 +44,31 @@ function isoDaysAgo(days: number): string {
   return date.toISOString();
 }
 
+/** Subject2 = buyer role (purchases), Subject1 = seller role (sales). */
+const SUBJECT_TYPES = ["Subject1", "Subject2"] as const;
+type SubjectType = (typeof SUBJECT_TYPES)[number];
+
+function parseSubjectType(value: string | undefined): SubjectType {
+  if (value === undefined) return "Subject2";
+  if ((SUBJECT_TYPES as readonly string[]).includes(value)) return value as SubjectType;
+  throw new Error(
+    `DUMP_SUBJECT_TYPE must be one of ${SUBJECT_TYPES.join(", ")}; received "${value}"`,
+  );
+}
+
 async function main() {
   const config = loadConfig();
+  const subjectType = parseSubjectType(process.env.DUMP_SUBJECT_TYPE);
+  const direction = subjectType === "Subject1" ? "sales" : "purchase";
   const windowDays = Number(process.env.DUMP_WINDOW_DAYS ?? 30);
   const windowFrom = process.env.DUMP_WINDOW_FROM ?? isoDaysAgo(windowDays);
   const windowTo = process.env.DUMP_WINDOW_TO ?? new Date().toISOString();
 
-  const outDir = join(process.cwd(), "data", "invoices");
+  const outDir = join(
+    process.cwd(),
+    "data",
+    subjectType === "Subject1" ? "invoices-sales" : "invoices",
+  );
   const rawDir = join(outDir, "raw");
   mkdirSync(rawDir, { recursive: true });
 
@@ -52,9 +76,11 @@ async function main() {
   const manager = new KsefSessionManager(config);
   const client = await manager.getClient();
 
-  console.log(`Fetching purchase invoices from ${windowFrom} to ${windowTo}...`);
+  console.log(
+    `Fetching ${direction} invoices (${subjectType}) from ${windowFrom} to ${windowTo}...`,
+  );
   const exportResult = await client.workflows.exportsIncremental.run({
-    subjectType: "Subject2",
+    subjectType,
     windowFrom,
     windowTo,
     continuationPoints: {},
