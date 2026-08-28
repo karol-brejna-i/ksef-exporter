@@ -30,7 +30,7 @@
  *   DUMP_WINDOW_FROM=2026-05-01 DUMP_WINDOW_TO=2026-06-01 pnpm run dump:invoices
  *   DUMP_SUBJECT_TYPE=Subject1 DUMP_WINDOW_DAYS=7 pnpm run dump:invoices
  */
-import "dotenv/config";
+import "../config/bootstrap-env.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../config/env.js";

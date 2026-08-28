@@ -27,7 +27,7 @@
  * `windowFrom` (design/SYNC_CONTINUATION_POINT_ANALYSIS.md §3.1) and skip the
  * historical range this script exists to fetch.
  */
-import "dotenv/config";
+import "../config/bootstrap-env.js";
 import { loadConfig } from "../config/env.js";
 import { createDb } from "../db/client.js";
 import { createSyncRun, markSyncRunError, markSyncRunSuccess } from "../db/sync-runs.js";

@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "../config/bootstrap-env.js";
 import type { KsefClient } from "ksef-client";
 import { seedCategorizationRules } from "../categorization/seed-rules.js";
 import { loadConfig } from "../config/env.js";

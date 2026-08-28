@@ -8,7 +8,7 @@
  * Usage:
  *   pnpm run smoke:ksef
  */
-import "dotenv/config";
+import "../config/bootstrap-env.js";
 import { loadConfig } from "../config/env.js";
 import { KsefSessionManager } from "./client.js";
 

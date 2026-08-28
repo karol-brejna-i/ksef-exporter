@@ -17,7 +17,7 @@
  *   SMOKE_WINDOW_DAYS=90 pnpm run smoke:invoices
  *   SMOKE_WINDOW_FROM=2026-05-01 SMOKE_WINDOW_TO=2026-06-01 pnpm run smoke:invoices
  */
-import "dotenv/config";
+import "../config/bootstrap-env.js";
 import { loadConfig } from "../config/env.js";
 import { KsefSessionManager } from "./client.js";
 import { fetchPurchaseInvoices } from "./invoices.js";

@@ -52,6 +52,38 @@ KSeF HTTPS traffic) or `HTTP_PROXY` variable. `ksef-client` also honors uppercas
 The pinned SDK does not read lowercase `https_proxy`, `http_proxy`, or `no_proxy`; the API logs a
 startup warning when it detects a lowercase-only proxy configuration.
 
+### Selecting an env file (modes)
+
+Env loading mirrors the `web/` Vite app. On every run the backend loads a shared base `.env`,
+then layers a mode-specific file on top. Precedence, lowest to highest:
+
+| # | Source                  |
+| - | ----------------------- |
+| 1 | `.env`                  |
+| 2 | `.env.local`            |
+| 3 | `.env.<mode>`           |
+| 4 | `.env.<mode>.local`     |
+| 5 | the real shell environment |
+
+The mode comes from the `APP_ENV` variable — the analogue of Vite's `--mode`, since there is no
+CLI flag here — and defaults to `development`. Keep shared settings in `.env` and put
+per-target overrides (typically `DATABASE_PATH`, `KSEF_NIP`, `KSEF_TOKEN`) in `.env.<mode>`:
+
+```sh
+APP_ENV=parkowa pnpm run dev:api      # loads .env, then .env.parkowa
+APP_ENV=portowa pnpm run start:api    # loads .env, then .env.portowa
+pnpm run dev:api                      # mode "development": .env (+ .env.development if present)
+```
+
+The same applies to the KSeF CLI helpers that read config — `smoke:ksef`, `smoke:invoices`,
+`dump:invoices`, `backfill:sales`:
+
+```sh
+APP_ENV=portowa pnpm run smoke:invoices
+```
+
+Variable expansion (`${OTHER_VAR}`) is not supported. All `.env*` files are git-ignored.
+
 ## 3. Run the API
 
 ```sh
@@ -60,7 +92,8 @@ pnpm run dev:api      # watches for changes (tsx watch)
 pnpm run start:api    # runs once, no watch
 ```
 
-The API listens on `http://localhost:$PORT` (default `3000`). It reads `.env` automatically.
+The API listens on `http://localhost:$PORT` (default `3000`). It loads `.env` automatically, plus
+any `.env.<APP_ENV>` overrides — see [Selecting an env file (modes)](#selecting-an-env-file-modes).
 
 Useful checks once it's running:
 
