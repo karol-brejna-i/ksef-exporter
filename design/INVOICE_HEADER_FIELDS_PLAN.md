@@ -1,11 +1,13 @@
 # KSeF Exporter — Expanding Extracted Invoice Attributes: Context & Execution Plan
 
-**Created:** 2026-08-28 09:09 CEST · **Updated:** 2026-08-28 09:25 CEST
+**Created:** 2026-08-28 09:09 CEST · **Updated:** 2026-08-28 10:42 CEST
 
-**Status:** Planning. Nothing in §5 is implemented yet. This document exists to brief a
-future agent (or a set of parallel subagents) on the *next* round of "read more of the
-XML, store it, show it" work, using everything already learned from doing this twice
-before (line items, then `invoice_kind`/`direction`).
+**Status:** Waves 0–1 of §6.5's scope are implemented and applied to both real tenant
+databases (see the new §5 entry below). Waves 2–3 (`scripts/export-invoices.py`, then API
+and UI) are not started. This document exists to brief a future agent (or a set of
+parallel subagents) on the *next* round of "read more of the XML, store it, show it" work,
+using everything already learned from doing this three times now (line items, then
+`invoice_kind`/`direction`, then net/vat/payment-due-date).
 
 **Companion to** [`SPEC.md`](./SPEC.md), [`INVOICE_ITEMS_PLAN.md`](./INVOICE_ITEMS_PLAN.md)
 (line items — implemented), [`INVOICE_TYPES_ANALYSIS.md`](./INVOICE_TYPES_ANALYSIS.md) (the
@@ -271,6 +273,31 @@ production incident in this repo. They are not theoretical style preferences.
   Fully shipped end-to-end (`SALES_INVOICES_PLAN.md`).
 - Line items (`invoice_items`, 25 columns covering the full `FaWiersz` structure) — fully
   shipped end-to-end, including the expandable-row UI.
+- `net_total`, `vat_total`, `payment_due_date` (§6.5) — schema, parser
+  (`extractNetTotal`/`extractVatTotal`/`extractPaymentDueDate` in
+  `src/ksef/invoice-parser.ts`), insert-time wiring in `parsePurchaseInvoiceXml`,
+  `InvoiceRow`/`NewKsefInvoice` types, and the backfill
+  (`src/invoices/backfill-invoice-totals.ts` + `pnpm run backfill:invoice-totals`) are all
+  implemented and applied to both real tenant databases as of 2026-08-28. **Not yet
+  surfaced in `scripts/export-invoices.py`, the API response, or the UI** — that's Waves
+  2–3, not yet started.
+
+  Re-derived acceptance figures (current data, grown since the original §6.1 measurement
+  of 249/530 rows to 253/570):
+  - parkowa: 253/253 succeeded (0 failed/skipped); 236/253 net+vat reconcile to gross
+    within 0.01; the other 17 are exempt invoices with a `P_13_*` bucket but genuinely no
+    `P_14_*` element at all (net_total == gross_total, vat_total correctly null — not a
+    mismatch, confirmed against raw_xml).
+  - portowa: 570/570 succeeded; 560/570 reconcile; 7 are the same exempt-with-no-P_14
+    pattern; 3 have neither `P_13_*` nor `P_14_*` at all (net_total and vat_total both
+    null), one of which is the documented zero-value `KOR`.
+  - `payment_due_date` non-null on 227/253 parkowa, 457/570 portowa (both roughly tracking
+    the original 90.8%/79.2% presence measurement).
+  - This is a wider set of "doesn't cleanly reconcile" rows than §6.1's "one known
+    exception" — the exempt-with-no-P_14 pattern wasn't anticipated there. It is not a
+    parsing defect: confirmed directly against `raw_xml` that these invoices have no
+    `P_14_*` element of any kind, so `null` (not `0`) is the correct extraction result per
+    §4.1's "never invent a value" rule.
 
 ---
 
@@ -348,6 +375,36 @@ invoice_corrections(
 Deliberately **no foreign key** from `corrected_ksef_number` to `invoices.ksef_number`:
 13% (parkowa) / 10% (portowa) of references point outside the sync window and would be
 rejected by an FK. Resolve by `LEFT JOIN` at read time instead.
+
+### 6.5 This round's actual scope (confirmed 2026-08-28)
+
+The current round covers exactly three columns from §6.1's five: **`net_total`,
+`vat_total`, `payment_due_date`**. `sale_date` and `payment_method` are explicitly
+deferred to a future round, not dropped — re-check §6.1 for their presence/formula before
+picking them up again. Also confirmed for this round:
+
+- **Stop after the backfill and `scripts/export-invoices.py`.** §7 steps 7–8 (API
+  response, `web/src/api/client.ts`, `InvoicesTable.tsx`) are explicitly deferred to a
+  future iteration. `export-invoices.py` queries SQLite directly (see
+  `scripts/README.md` and the script itself) — it does not go through
+  `src/api/server.ts` at all, so this round needs no API-layer change to produce a
+  verifiable export.
+- **Wire these three fields into the insert path, unlike `invoice_kind`.** Investigating
+  the shipped `invoice_kind` precedent for this round surfaced a gap worth recording:
+  `invoiceKind` is **not** part of `NewKsefInvoice`/the insert path in
+  `src/db/invoices.ts` at all — it is always inserted `NULL` and only ever populated by
+  running `backfillInvoiceKind` (`src/invoices/backfill-invoice-kind.ts`) after the fact,
+  via a dedicated `updateInvoiceKind` setter. Nothing in `src/sync.ts` calls that setter
+  after a fresh sync, so a newly-synced invoice's `invoice_kind` stays `NULL` until the
+  backfill is next run — contrary to what §3.2's pipeline diagram implies with "automatic
+  once 1–3 are done." Since `P_13_*`, `P_14_*`, and `Termin` sit in the same already-parsed
+  `Fa` element that `P_15`→`grossTotal` already reads (and `grossTotal` *is* required at
+  parse/insert time), this round's three fields are extracted in that same insert-time
+  parse step instead of following `invoice_kind`'s backfill-only pattern — so future syncs
+  populate them immediately, and the backfill script only needs to cover the 779
+  already-stored rows, not become a permanently-recurring chore. A future field that picks
+  `invoice_kind`'s exact pattern instead should make that a deliberate choice, not an
+  assumption drawn from §3.2's diagram.
 
 ### 6.4 Explicitly do not build without a fresh, explicit ask
 
