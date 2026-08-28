@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a137675e-21ac-4e77-af21-4481a2e69293",
-  "prevId": "61eff051-a5f2-454f-93fa-d6b10d1aceda",
+  "id": "0aef9848-c5aa-496d-9361-ccfa3c4dd7b5",
+  "prevId": "a137675e-21ac-4e77-af21-4481a2e69293",
   "tables": {
     "categories": {
       "name": "categories",
@@ -425,11 +425,32 @@
           "notNull": true,
           "autoincrement": false
         },
+        "net_total": {
+          "name": "net_total",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "vat_total": {
+          "name": "vat_total",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "currency": {
           "name": "currency",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "payment_due_date": {
+          "name": "payment_due_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "raw_xml": {
@@ -510,6 +531,10 @@
         "invoices_invoice_kind_enum": {
           "name": "invoices_invoice_kind_enum",
           "value": "\"invoices\".\"invoice_kind\" IS NULL OR \"invoices\".\"invoice_kind\" IN ('VAT', 'KOR', 'ZAL', 'ROZ', 'UPR', 'KOR_ZAL', 'KOR_ROZ')"
+        },
+        "invoices_payment_due_date_iso": {
+          "name": "invoices_payment_due_date_iso",
+          "value": "\"invoices\".\"payment_due_date\" IS NULL OR (\"invoices\".\"payment_due_date\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND \"invoices\".\"payment_due_date\" IS date(\"invoices\".\"payment_due_date\"))"
         },
         "invoices_confidence_enum": {
           "name": "invoices_confidence_enum",

@@ -73,7 +73,18 @@ export const invoices = sqliteTable(
     /** ISO date string (Fa/P_1 for KSeF invoices). */
     issueDate: text("issue_date").notNull(),
     grossTotal: real("gross_total").notNull(),
+    /**
+     * Sum of Fa/P_13_1..11 (net) and Fa/P_14_1..5 excluding the "W"
+     * (PLN-equivalent) suffix (vat). Nullable: manual entries have none, and
+     * KSeF rows without a parseable P_13/P_14 breakdown (e.g. a zero-value
+     * KOR) stay null rather than block insert -- see
+     * design/INVOICE_HEADER_FIELDS_PLAN.md §6.1.
+     */
+    netTotal: real("net_total"),
+    vatTotal: real("vat_total"),
     currency: text("currency").notNull(),
+    /** Fa/Platnosc/TerminPlatnosci/Termin, a civil date. Nullable: absent on manual entries and on invoices with no stated payment term. */
+    paymentDueDate: text("payment_due_date"),
     /** Null for manual entries; retained for audit/debugging per SPEC §3.4. */
     rawXml: text("raw_xml"),
     /**
@@ -114,6 +125,10 @@ export const invoices = sqliteTable(
     check(
       "invoices_invoice_kind_enum",
       sql`${table.invoiceKind} IS NULL OR ${table.invoiceKind} IN ('VAT', 'KOR', 'ZAL', 'ROZ', 'UPR', 'KOR_ZAL', 'KOR_ROZ')`,
+    ),
+    check(
+      "invoices_payment_due_date_iso",
+      sql`${table.paymentDueDate} IS NULL OR (${table.paymentDueDate} GLOB ${ISO_DATE_GLOB} AND ${table.paymentDueDate} IS date(${table.paymentDueDate}))`,
     ),
     check(
       "invoices_confidence_enum",
