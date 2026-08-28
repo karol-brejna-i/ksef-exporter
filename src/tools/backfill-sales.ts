@@ -1,9 +1,12 @@
 /**
- * CLI for the historical sales-invoice backfill
- * (design/SALES_INVOICES_PLAN.md Step 6).
+ * CLI for a historical invoice backfill, one direction and tenant at a time
+ * (design/SALES_INVOICES_PLAN.md Step 6). Originally sales-only; genera-
+ * lized to also cover purchase re-backfills, which hit the exact same
+ * continuation-point and date-range hazards.
  *
  * Makes real KSeF network calls against the tenant selected by `.env` /
- * `DATABASE_PATH` -- run once per tenant, switching `.env` between runs.
+ * `DATABASE_PATH` (or `APP_ENV`, see README.md "Selecting an env file") --
+ * run once per tenant, switching `APP_ENV`/`.env` between runs.
  * Mirrors `POST /sync`'s bookkeeping exactly (one `sync_runs` row per call,
  * same success/error diagnostics) so the run shows up in Recent Imports like
  * any other sync.
@@ -19,13 +22,16 @@
  *   BACKFILL_WINDOW_FROM=2026-05-01 BACKFILL_WINDOW_TO=2026-08-28 \
  *     pnpm run backfill:sales
  *
+ * BACKFILL_DIRECTION selects "sales" (default, Subject1) or "purchase"
+ * (Subject2) -- each direction has its own continuation point and export-init
+ * quota, so the two never interfere with each other.
  * BACKFILL_MAX_CALLS overrides the default 15-call safety cap (e.g. to make
  * exactly one careful call when the hourly quota is already partly spent).
- * BACKFILL_RESET_CONTINUATION=true clears the stored Subject1 continuation
- * point first -- required before a backfill whose window contains an
- * existing high-water mark, which would otherwise silently win over
- * `windowFrom` (design/SYNC_CONTINUATION_POINT_ANALYSIS.md §3.1) and skip the
- * historical range this script exists to fetch.
+ * BACKFILL_RESET_CONTINUATION=true clears the stored continuation point for
+ * the selected direction first -- required before a backfill whose window
+ * contains an existing high-water mark, which would otherwise silently win
+ * over `windowFrom` (design/SYNC_CONTINUATION_POINT_ANALYSIS.md §3.1) and
+ * skip the historical range this script exists to fetch.
  */
 import "../config/bootstrap-env.js";
 import { loadConfig } from "../config/env.js";
@@ -51,11 +57,12 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  const direction = process.env.BACKFILL_DIRECTION === "purchase" ? "purchase" : "sales";
 
   const config = loadConfig();
-  const subjectType = SUBJECT_TYPE_BY_DIRECTION.sales;
+  const subjectType = SUBJECT_TYPE_BY_DIRECTION[direction];
   console.log(
-    `Backfilling sales invoices for NIP ${config.KSEF_NIP} (${config.KSEF_ENVIRONMENT}) ` +
+    `Backfilling ${direction} invoices for NIP ${config.KSEF_NIP} (${config.KSEF_ENVIRONMENT}) ` +
       `into ${config.DATABASE_PATH}, window ${windowFrom} -> ${windowTo}...`,
   );
 
@@ -65,7 +72,7 @@ async function main() {
 
   if (process.env.BACKFILL_RESET_CONTINUATION === "true") {
     await setContinuationPoint(db, subjectType, null);
-    console.log("Reset stored Subject1 continuation point to null.");
+    console.log(`Reset stored ${subjectType} continuation point to null.`);
   }
 
   let totalInvoices = 0;
@@ -88,7 +95,7 @@ async function main() {
       const result = await syncPurchaseInvoices(
         db,
         client,
-        { windowFrom, windowTo, direction: "sales" },
+        { windowFrom, windowTo, direction },
         { logger: { info: () => {}, warn: (event, meta) => console.warn(event, meta) } },
       );
       const completedAtMs = Date.now();
@@ -113,7 +120,9 @@ async function main() {
       );
 
       if (!result.hasMore) {
-        console.log(`\nDone. ${totalInvoices} sales invoice(s) inserted across ${call} call(s).`);
+        console.log(
+          `\nDone. ${totalInvoices} ${direction} invoice(s) inserted across ${call} call(s).`,
+        );
         return;
       }
     } catch (error) {
