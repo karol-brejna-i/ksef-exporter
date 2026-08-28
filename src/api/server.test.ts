@@ -161,6 +161,33 @@ describe("API server", () => {
       expect(body.invoices[0]?.ksefNumber).toBe(SAMPLE_INVOICE.ksefNumber);
     });
 
+    it("includes net_total/vat_total/payment_due_date in the response", async () => {
+      await insertKsefInvoiceIfNotExists(db, {
+        ...SAMPLE_INVOICE,
+        netTotal: 1000.5,
+        vatTotal: 234.06,
+        paymentDueDate: "2025-01-29",
+      });
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      const body = response.json() as {
+        invoices: Array<{
+          netTotal: number | null;
+          vatTotal: number | null;
+          paymentDueDate: string | null;
+        }>;
+      };
+      expect(body.invoices[0]?.netTotal).toBe(1000.5);
+      expect(body.invoices[0]?.vatTotal).toBe(234.06);
+      expect(body.invoices[0]?.paymentDueDate).toBe("2025-01-29");
+    });
+
     it("filters by month and categoryId query params", async () => {
       const category = await createCategory(db, "Media");
       const inserted = await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
