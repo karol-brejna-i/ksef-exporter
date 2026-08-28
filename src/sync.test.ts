@@ -619,13 +619,43 @@ describe("syncPurchaseInvoices", () => {
       db,
       fakeClient(),
       { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
-      { fetchInvoices },
+      // hasMore is also capped by wall-clock "now" (see the future-windowTo
+      // regression test below), so this must inject a "now" past the window
+      // for the scenario -- "the 31st has already happened" -- to hold.
+      { fetchInvoices, now: () => Date.parse("2026-09-01T00:00:00Z") },
     );
 
     // Lexicographically the instant sorts after the bare date, which used to
     // report the import complete while the rest of the 31st went unimported.
     expect("2026-08-31T05:00:00+00:00" < "2026-08-31").toBe(false);
     expect(result.hasMore).toBe(true);
+
+    sqlite.close();
+  });
+
+  it("regression: does not report hasMore forever when windowTo is in the future", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // KSeF found nothing new and advanced its high-water mark to roughly
+    // "now" (a few seconds after the injected clock), not to windowTo, which
+    // is still 3 days away -- comparing only against windowTo would report
+    // hasMore forever since "now" always creeps forward but windowTo never
+    // arrives on its own.
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2026-08-28T18:00:05+00:00" },
+      referenceNumbers: [],
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-06-01", windowTo: "2026-08-31" },
+      { fetchInvoices, now: () => Date.parse("2026-08-28T18:00:00Z") },
+    );
+
+    expect(result.hasMore).toBe(false);
 
     sqlite.close();
   });

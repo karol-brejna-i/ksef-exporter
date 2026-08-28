@@ -356,7 +356,14 @@ export async function syncPurchaseInvoices(
   );
   await setContinuationPoint(db, subjectType, persistedContinuationPoint);
   const newContinuationMs = continuationPointMs(newContinuationPoint ?? null, logger);
-  const hasMore = newContinuationMs !== null && newContinuationMs < windowEndExclusiveMs;
+  // When windowTo is today or later, KSeF has no future invoices to report and
+  // its own high-water mark advances to roughly "now" instead -- comparing
+  // only against windowTo would then report hasMore forever, since "now" keeps
+  // creeping forward on every poll but never reaches a windowTo that hasn't
+  // happened yet. Capping the comparison at "now" too means hasMore correctly
+  // means "more to fetch right now", not "more once windowTo actually arrives".
+  const effectiveWindowEndMs = Math.min(windowEndExclusiveMs, now());
+  const hasMore = newContinuationMs !== null && newContinuationMs < effectiveWindowEndMs;
   const needsReviewCount = invoices.filter(
     (invoice) => invoice.categorizationConfidence === "needs_review",
   ).length;
