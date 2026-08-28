@@ -30,10 +30,13 @@ COLUMNS = [
     ("ksef_number", "Numer KSeF", 38),
     ("invoice_number", "Numer faktury", 24),
     ("issue_date", "Data wystawienia", 14),
+    ("payment_due_date", "Termin płatności", 14),
     ("seller_nip", "NIP sprzedawcy", 14),
     ("seller_name", "Sprzedawca", 40),
     ("buyer_nip", "NIP nabywcy", 14),
     ("buyer_name", "Nabywca", 40),
+    ("net_total", "Netto", 12),
+    ("vat_total", "VAT", 12),
     ("gross_total", "Brutto", 12),
     ("currency", "Waluta", 8),
     ("category_name", "Kategoria", 16),
@@ -52,10 +55,13 @@ def fetch_invoices(db_path: Path, date_from: str | None = None, date_to: str | N
           i.ksef_number,
           i.invoice_number,
           i.issue_date,
+          i.payment_due_date,
           i.seller_nip,
           i.seller_name,
           i.buyer_nip,
           i.buyer_name,
+          i.net_total,
+          i.vat_total,
           i.gross_total,
           i.currency,
           c.name AS category_name,
@@ -102,7 +108,7 @@ def build_xlsx(invoices: list[dict], out_path: Path) -> None:
             value = inv.get(key)
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
             cell.font = BODY_FONT
-            if key == "gross_total" and value is not None:
+            if key in ("net_total", "vat_total", "gross_total") and value is not None:
                 cell.number_format = CURRENCY_FORMAT
                 cell.alignment = Alignment(horizontal="right")
 
