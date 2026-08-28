@@ -27,6 +27,7 @@
     "backfill:sales": "tsx src/tools/backfill-sales.ts",
     "dev:api": "tsx watch src/api/main.ts",
     "start:api": "tsx src/api/main.ts",
+    "dev:web": "pnpm --dir web run dev",
     "db:generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate"
   },
