@@ -37,7 +37,10 @@ export interface InvoiceRow {
   buyerName: string | null;
   issueDate: string;
   grossTotal: number;
+  netTotal: number | null;
+  vatTotal: number | null;
   currency: string;
+  paymentDueDate: string | null;
   rawXml: string | null;
   /** NULL = line-item extraction never attempted; see design/INVOICE_ITEMS_PLAN.md §6.3. */
   itemsExtractedAt: Date | null;
@@ -55,7 +58,10 @@ export interface NewKsefInvoice {
   buyerName?: string | null;
   issueDate: string;
   grossTotal: number;
+  netTotal?: number | null;
+  vatTotal?: number | null;
   currency: string;
+  paymentDueDate?: string | null;
   rawXml: string;
   /** Defaults to "purchase" (the schema default) when omitted. */
   direction?: InvoiceDirection;
@@ -181,6 +187,24 @@ export async function updateInvoiceKind(
     .set({ invoiceKind: kind })
     .where(eq(invoices.id, invoiceId))
     .returning();
+  if (!row) {
+    throw new Error(`Invoice ${invoiceId} not found`);
+  }
+  return row;
+}
+
+export interface InvoiceTotalsUpdate {
+  netTotal: number | null;
+  vatTotal: number | null;
+  paymentDueDate: string | null;
+}
+
+export async function updateInvoiceTotals(
+  db: Db,
+  invoiceId: number,
+  totals: InvoiceTotalsUpdate,
+): Promise<InvoiceRow> {
+  const [row] = await db.update(invoices).set(totals).where(eq(invoices.id, invoiceId)).returning();
   if (!row) {
     throw new Error(`Invoice ${invoiceId} not found`);
   }

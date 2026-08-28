@@ -93,6 +93,12 @@ export interface PurchaseInvoiceRecord {
   grossTotal: number;
   /** ISO 4217 currency code (Fa/KodWaluty). */
   currency: string;
+  /** Sum of Fa/P_13_1..11, best-effort; null if none of those elements are present. */
+  netTotal: number | null;
+  /** Sum of Fa/P_14_1..5 (excluding the "W" PLN-equivalent suffix), best-effort; null if none present. */
+  vatTotal: number | null;
+  /** Fa/Platnosc/TerminPlatnosci/Termin, a civil date; null if absent. */
+  paymentDueDate: string | null;
   /** Raw invoice XML, retained for audit/debugging per SPEC §3.4. */
   rawXml: string;
   /**
@@ -315,6 +321,68 @@ export function extractInvoiceKind(fa: Record<string, unknown>): string | null {
   return asString(fa.RodzajFaktury) ?? null;
 }
 
+/** Fa/P_13_1..11 (net breakdown by VAT-rate bucket), per design/INVOICE_HEADER_FIELDS_PLAN.md §6.1. */
+const NET_TOTAL_FIELDS = [
+  "P_13_1",
+  "P_13_2",
+  "P_13_3",
+  "P_13_4",
+  "P_13_5",
+  "P_13_6_1",
+  "P_13_6_2",
+  "P_13_6_3",
+  "P_13_7",
+  "P_13_8",
+  "P_13_9",
+  "P_13_10",
+  "P_13_11",
+];
+
+/**
+ * Fa/P_14_1..5 (VAT breakdown by rate bucket). Deliberately excludes the
+ * P_14_*W siblings, which hold the PLN-equivalent VAT amount for
+ * foreign-currency invoices -- including them double-counts VAT even though
+ * every invoice observed so far is PLN (design/INVOICE_HEADER_FIELDS_PLAN.md §6.1).
+ */
+const VAT_TOTAL_FIELDS = ["P_14_1", "P_14_2", "P_14_3", "P_14_4", "P_14_5"];
+
+/**
+ * Sums whichever of `fields` are present on `fa`. Returns null (not 0) when
+ * none of them are present at all -- a genuine "no breakdown in this
+ * document" (e.g. a zero-value KOR) must not be conflated with a real zero
+ * total, per the one measured portowa exception in
+ * design/INVOICE_HEADER_FIELDS_PLAN.md §6.1.
+ */
+function sumAmountFields(fa: Record<string, unknown>, fields: readonly string[]): number | null {
+  let sum = 0;
+  let anyPresent = false;
+  for (const field of fields) {
+    const amount = parseAmount(fa[field]);
+    if (amount !== undefined) {
+      sum += amount;
+      anyPresent = true;
+    }
+  }
+  return anyPresent ? sum : null;
+}
+
+/** Extracts the net total, best-effort; see `NET_TOTAL_FIELDS`. */
+export function extractNetTotal(fa: Record<string, unknown>): number | null {
+  return sumAmountFields(fa, NET_TOTAL_FIELDS);
+}
+
+/** Extracts the VAT total, best-effort; see `VAT_TOTAL_FIELDS`. */
+export function extractVatTotal(fa: Record<string, unknown>): number | null {
+  return sumAmountFields(fa, VAT_TOTAL_FIELDS);
+}
+
+/** Extracts Fa/Platnosc/TerminPlatnosci/Termin, best-effort. */
+export function extractPaymentDueDate(fa: Record<string, unknown>): string | null {
+  const platnosc = asRecord(fa.Platnosc);
+  const terminPlatnosci = asRecord(platnosc.TerminPlatnosci);
+  return asString(terminPlatnosci.Termin) ?? null;
+}
+
 /**
  * Parses a single KSeF purchase-invoice XML document (FA(2)/FA(3)) into a
  * flat record. Throws `InvoiceParsingError` if the XML is malformed or is
@@ -374,6 +442,9 @@ export function parsePurchaseInvoiceXml(
     issueDate: issueDate as string,
     grossTotal: grossTotal as number,
     currency: currency as string,
+    netTotal: extractNetTotal(fa),
+    vatTotal: extractVatTotal(fa),
+    paymentDueDate: extractPaymentDueDate(fa),
     rawXml: xml,
     items: extractInvoiceItems(fa),
   };

@@ -53,6 +53,9 @@ function record(overrides: Partial<FetchPurchaseInvoicesResult["invoices"][numbe
     issueDate: "2025-01-15",
     grossTotal: 123.45,
     currency: "PLN",
+    netTotal: null,
+    vatTotal: null,
+    paymentDueDate: null,
     rawXml: "<Faktura/>",
     items: [],
     ...overrides,
@@ -94,6 +97,34 @@ describe("syncPurchaseInvoices", () => {
       needsReviewCount: 0,
       maxIterations: 1,
     });
+
+    sqlite.close();
+  });
+
+  it("persists net_total/vat_total/payment_due_date on a fresh sync, with no separate backfill step", async () => {
+    // design/INVOICE_HEADER_FIELDS_PLAN.md §6.5: unlike invoice_kind (which is
+    // only ever set by the offline backfill), these three fields are wired
+    // into the same insert-time parse step as grossTotal, so a newly-synced
+    // invoice must have them populated immediately.
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record({ netTotal: 100.5, vatTotal: 22.95, paymentDueDate: "2025-02-14" })],
+      continuationPoints: { Subject2: "2025-01-31T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    expect(result.invoices[0]?.netTotal).toBe(100.5);
+    expect(result.invoices[0]?.vatTotal).toBe(22.95);
+    expect(result.invoices[0]?.paymentDueDate).toBe("2025-02-14");
 
     sqlite.close();
   });

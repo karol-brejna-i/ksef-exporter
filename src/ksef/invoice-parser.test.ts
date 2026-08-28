@@ -1,6 +1,13 @@
 import { crc8Hex } from "ksef-client";
 import { describe, expect, it } from "vitest";
-import { InvoiceParsingError, parsePurchaseInvoiceXml } from "./invoice-parser.js";
+import {
+  extractNetTotal,
+  extractPaymentDueDate,
+  extractVatTotal,
+  InvoiceParsingError,
+  parseInvoiceFaElement,
+  parsePurchaseInvoiceXml,
+} from "./invoice-parser.js";
 
 /** Builds a syntactically valid (per validateKsefNumber) 35-char KSeF number. */
 function buildValidKsefNumber(main32: string): string {
@@ -223,6 +230,9 @@ describe("parsePurchaseInvoiceXml", () => {
       issueDate: "2025-01-15",
       grossTotal: 1234.56,
       currency: "PLN",
+      netTotal: null,
+      vatTotal: null,
+      paymentDueDate: null,
       rawXml: xml,
       items: [],
     });
@@ -498,5 +508,51 @@ describe("parsePurchaseInvoiceXml line items", () => {
     const record = parsePurchaseInvoiceXml(`${SAMPLE_KSEF_NUMBER}.xml`, buildInvoiceXml({}));
 
     expect(record.items).toEqual([]);
+  });
+});
+
+describe("extractNetTotal / extractVatTotal / extractPaymentDueDate", () => {
+  it("sums net and VAT buckets and reads the payment due date", () => {
+    const fa = parseInvoiceFaElement(
+      buildInvoiceXml({
+        itemsXml:
+          "<P_13_1>100.00</P_13_1><P_13_7>50.50</P_13_7><P_14_1>23.00</P_14_1><P_14_5>4.50</P_14_5><Platnosc><TerminPlatnosci><Termin>2025-02-14</Termin></TerminPlatnosci></Platnosc>",
+      }),
+    );
+
+    expect(extractNetTotal(fa)).toBeCloseTo(150.5);
+    expect(extractVatTotal(fa)).toBeCloseTo(27.5);
+    expect(extractPaymentDueDate(fa)).toBe("2025-02-14");
+  });
+
+  it("excludes the *W (PLN-equivalent) VAT suffix from the VAT sum", () => {
+    // §6.1: P_14_1W is the foreign-currency PLN-equivalent VAT amount, not a
+    // sixth VAT bucket -- including it would double-count VAT.
+    const fa = parseInvoiceFaElement(
+      buildInvoiceXml({ itemsXml: "<P_14_1>23.00</P_14_1><P_14_1W>23.00</P_14_1W>" }),
+    );
+
+    expect(extractVatTotal(fa)).toBe(23);
+  });
+
+  it("returns null (not 0) when none of the underlying elements are present", () => {
+    const fa = parseInvoiceFaElement(buildInvoiceXml({}));
+
+    expect(extractNetTotal(fa)).toBeNull();
+    expect(extractVatTotal(fa)).toBeNull();
+    expect(extractPaymentDueDate(fa)).toBeNull();
+  });
+
+  it("wires net_total/vat_total/payment_due_date into parsePurchaseInvoiceXml at insert time", () => {
+    const xml = buildInvoiceXml({
+      itemsXml:
+        "<P_13_1>100.00</P_13_1><P_14_1>23.00</P_14_1><Platnosc><TerminPlatnosci><Termin>2025-02-14</Termin></TerminPlatnosci></Platnosc>",
+    });
+
+    const record = parsePurchaseInvoiceXml(`${SAMPLE_KSEF_NUMBER}.xml`, xml);
+
+    expect(record.netTotal).toBe(100);
+    expect(record.vatTotal).toBe(23);
+    expect(record.paymentDueDate).toBe("2025-02-14");
   });
 });
