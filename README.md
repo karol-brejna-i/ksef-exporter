@@ -57,13 +57,13 @@ startup warning when it detects a lowercase-only proxy configuration.
 Env loading mirrors the `web/` Vite app. On every run the backend loads a shared base `.env`,
 then layers a mode-specific file on top. Precedence, lowest to highest:
 
-| # | Source                  |
-| - | ----------------------- |
-| 1 | `.env`                  |
-| 2 | `.env.local`            |
-| 3 | `.env.<mode>`           |
-| 4 | `.env.<mode>.local`     |
-| 5 | the real shell environment |
+| #   | Source                     |
+| --- | -------------------------- |
+| 1   | `.env`                     |
+| 2   | `.env.local`               |
+| 3   | `.env.<mode>`              |
+| 4   | `.env.<mode>.local`        |
+| 5   | the real shell environment |
 
 The mode comes from the `APP_ENV` variable — the analogue of Vite's `--mode`, since there is no
 CLI flag here — and defaults to `development`. Keep shared settings in `.env` and put
@@ -82,7 +82,11 @@ The same applies to the KSeF CLI helpers that read config — `smoke:ksef`, `smo
 APP_ENV=portowa pnpm run smoke:invoices
 ```
 
-Variable expansion (`${OTHER_VAR}`) is not supported. All `.env*` files are git-ignored.
+`APP_ENV` also selects the mode file for `pnpm run dev:web`, so the API and the web dev server
+can be started as a matched pair — see [Run the web UI](#4-run-the-web-ui).
+
+The backend loader does not expand `${OTHER_VAR}` references. The `web/` Vite app reads these
+same repo-root files (via `envDir`) and *does* expand them. All `.env*` files are git-ignored.
 
 ## 3. Run the API
 
@@ -105,16 +109,39 @@ curl -X POST http://localhost:3000/auth/login \
 
 ## 4. Run the web UI
 
-In a separate terminal:
+In a separate terminal, from the repo root:
 
 ```sh
-cd web
-pnpm run dev
+pnpm run dev:web      # = pnpm --dir web run dev
+```
+
+Run the API and the web dev server as a tenant-matched pair — one per terminal, same `APP_ENV`
+on both so the web proxy resolves against the same `.env.<mode>` file the API loaded:
+
+```sh
+APP_ENV=parkowa pnpm run dev:api      # API: .env, then .env.parkowa
+APP_ENV=parkowa pnpm run dev:web      # web: proxy target from the same files
+
+pnpm run dev:api                      # default mode: .env only
+pnpm run dev:web
 ```
 
 Open the printed URL (default `http://localhost:5173`). The dev server proxies `/api/*` requests
-to the API at `http://localhost:3000` (see `web/vite.config.ts`), so make sure the API is running
-first. Log in with the `AUTH_USERNAME`/`AUTH_PASSWORD` from your `.env`.
+to the API, so make sure the API is running first. Log in with the `AUTH_USERNAME`/`AUTH_PASSWORD`
+from your `.env`.
+
+`web/vite.config.ts` reads the same repo-root `.env*` files as the backend (it points Vite's
+`envDir` at the repo root), so the proxy target follows `PORT` with no extra configuration.
+Override either side from those files:
+
+| Variable           | Effect                                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `API_PROXY_TARGET` | Where `/api/*` is proxied. Defaults to `http://localhost:${PORT}`. `${VAR}` references are expanded, and a full URL lets you point at an API on another host. |
+| `WEB_DEV_PORT`     | Port the Vite dev server listens on (default `5173`). Change `WEB_ORIGIN` to match so the API's CORS allow-list still accepts it.                             |
+
+`APP_ENV` picks the tenant/mode file for the proxy resolution, exactly as it does for the API;
+without it the web server reads `.env` only. Vite's own `--mode` flag is separate and still
+governs `VITE_`-prefixed vars and production builds.
 
 The JWT is kept in memory only (not `localStorage`/`sessionStorage`), so refreshing the page
 requires logging in again — this is intentional, to limit exposure if the page is ever
