@@ -45,6 +45,39 @@ COLUMNS = [
 ]
 
 
+def check_database(db_path: Path) -> None:
+    """Exits with a clear message if `db_path` isn't a usable invoices database,
+    instead of letting a confusing traceback surface from the query itself."""
+    if not db_path.exists():
+        print(f"Database not found: {db_path}", file=sys.stderr)
+        sys.exit(1)
+    if not db_path.is_file():
+        print(f"Not a file: {db_path}", file=sys.stderr)
+        sys.exit(1)
+
+    conn = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'invoices'"
+        ).fetchone()
+    except sqlite3.DatabaseError as error:
+        print(f"Not a valid SQLite database: {db_path} ({error})", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    if table is None:
+        print(
+            f"No 'invoices' table found in {db_path} -- is this a ksef-exporter database? "
+            "(the app's real data lives under data/tenants/<tenant>/ksef-exporter.sqlite, "
+            "not the empty data/ksef-exporter.sqlite stub)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def fetch_invoices(db_path: Path, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -145,11 +178,6 @@ def main() -> None:
         help="latest issue date (inclusive)",
     )
     parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="print all script parameters before exporting",
-    )
-    parser.add_argument(
         "output",
         nargs="?",
         default=str(DEFAULT_OUT),
@@ -157,17 +185,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.debug:
-        print("Debug — script parameters:")
-        print(f"  db_path:     {args.db_path}")
-        print(f"  date_from:   {args.date_from}")
-        print(f"  date_to:     {args.date_to}")
-        print(f"  output:      {args.output}")
-
     db_path = Path(args.db_path)
-    if not db_path.exists():
-        print(f"Database not found: {db_path}", file=sys.stderr)
-        sys.exit(1)
+    print("Parameters:")
+    print(f"  db_path:     {db_path}")
+    print(f"  date_from:   {args.date_from}")
+    print(f"  date_to:     {args.date_to}")
+    print(f"  output:      {args.output}")
+    print()
+
+    check_database(db_path)
 
     invoices = fetch_invoices(db_path, date_from=args.date_from, date_to=args.date_to)
     if not invoices:

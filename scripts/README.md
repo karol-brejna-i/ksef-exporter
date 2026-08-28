@@ -22,7 +22,10 @@ python scripts/export-invoices.py --db path/to/custom.sqlite
 python scripts/export-invoices.py --from 2026-05-01        # from May 1st onward
 python scripts/export-invoices.py --to 2026-06-30          # up to June 30th
 python scripts/export-invoices.py --from 2026-05-01 --to 2026-06-30 ~/Desktop/maj-czerwiec.xlsx
-python scripts/export-invoices.py --debug                    # print all parameters, then export
 ```
 
-Last updated: 2026-08-10 12:00
+Every run prints the resolved parameters (db path, date range, output path) before exporting.
+The script also validates that `--db` points at a real SQLite file with an `invoices` table
+before querying it, rather than letting a raw traceback surface.
+
+Last updated: 2026-08-28 10:52 CEST
