@@ -30,7 +30,13 @@ export interface Invoice {
   buyerName: string | null;
   issueDate: string;
   grossTotal: number;
+  /** Sum of Fa/P_13_1..11; null on manual entries and invoices with no parseable breakdown. */
+  netTotal: number | null;
+  /** Sum of Fa/P_14_1..5 (excluding the PLN-equivalent *W suffix); null on manual entries and invoices with no parseable breakdown. */
+  vatTotal: number | null;
   currency: string;
+  /** Fa/Platnosc/TerminPlatnosci/Termin, a civil date (YYYY-MM-DD); null when absent. */
+  paymentDueDate: string | null;
   categoryId: number | null;
   categorizationConfidence: CategorizationConfidence;
   createdAt: string; // ISO-8601 UTC instant (YYYY-MM-DDTHH:MM:SS.sssZ)

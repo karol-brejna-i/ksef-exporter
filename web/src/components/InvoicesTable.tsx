@@ -102,6 +102,7 @@ export function InvoicesTable({ invoices, categories, token, onCorrected }: Invo
         <thead>
           <tr>
             <th>Date</th>
+            <th>Due date</th>
             <th>Seller</th>
             <th>Amount</th>
             <th>Category</th>
@@ -126,9 +127,15 @@ export function InvoicesTable({ invoices, categories, token, onCorrected }: Invo
                 }
               >
                 <td>{invoice.issueDate}</td>
+                <td>{invoice.paymentDueDate ?? "—"}</td>
                 <td>{invoice.sellerName}</td>
                 <td>
                   {invoice.grossTotal.toFixed(2)} {invoice.currency}
+                  {invoice.netTotal !== null && invoice.vatTotal !== null && (
+                    <div style={{ color: "gray", fontSize: "0.85em" }}>
+                      netto {invoice.netTotal.toFixed(2)} + VAT {invoice.vatTotal.toFixed(2)}
+                    </div>
+                  )}
                 </td>
                 <td>
                   {invoice.direction === "sales" ? (

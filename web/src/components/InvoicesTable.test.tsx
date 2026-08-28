@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Category, Invoice, InvoiceItem } from "../api/client";
@@ -27,7 +27,10 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
     buyerName: "Parkowa Sp. z o.o.",
     issueDate: "2025-01-15",
     grossTotal: 123.45,
+    netTotal: null,
+    vatTotal: null,
     currency: "PLN",
+    paymentDueDate: null,
     categoryId: 1,
     categorizationConfidence: "matched",
     createdAt: "2025-01-16T00:00:00.000Z",
@@ -64,6 +67,58 @@ describe("InvoicesTable", () => {
     expect(screen.getByText("Energa Operator")).toBeInTheDocument();
     expect(screen.getByText("123.45 PLN")).toBeInTheDocument();
     expect(screen.getByLabelText("Category for Energa Operator")).toHaveValue("1");
+  });
+
+  it("shows the payment due date when present, or a dash when absent", () => {
+    render(
+      <InvoicesTable
+        invoices={[
+          invoice({ id: 1, sellerName: "Seller With Due Date", paymentDueDate: "2025-01-29" }),
+          invoice({ id: 2, sellerName: "Seller Without Due Date", paymentDueDate: null }),
+        ]}
+        categories={categories}
+        token="jwt-token"
+        onCorrected={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("2025-01-29")).toBeInTheDocument();
+
+    // Column order: Date, Due date, Seller, Amount, Category, Status. Scoped
+    // to this row's cells so the assertion can't match the category select's
+    // own "—" placeholder option instead.
+    const row = screen.getByText("Seller Without Due Date").closest("tr");
+    if (!row) {
+      throw new Error("expected a table row for 'Seller Without Due Date'");
+    }
+    expect(within(row).getAllByRole("cell").at(1)).toHaveTextContent("—");
+  });
+
+  it("shows a net/VAT breakdown under the gross amount when both are present", () => {
+    render(
+      <InvoicesTable
+        invoices={[invoice({ grossTotal: 123.45, netTotal: 100.37, vatTotal: 23.08 })]}
+        categories={categories}
+        token="jwt-token"
+        onCorrected={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("123.45 PLN")).toBeInTheDocument();
+    expect(screen.getByText("netto 100.37 + VAT 23.08")).toBeInTheDocument();
+  });
+
+  it("omits the net/VAT breakdown when either is null", () => {
+    render(
+      <InvoicesTable
+        invoices={[invoice({ netTotal: null, vatTotal: null })]}
+        categories={categories}
+        token="jwt-token"
+        onCorrected={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/netto/)).not.toBeInTheDocument();
   });
 
   it("shows no category select or correction control on a sales row", () => {
