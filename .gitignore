@@ -12,3 +12,4 @@ coverage/
 *.tsbuildinfo
 chat.json
 scratch/
+.env.*

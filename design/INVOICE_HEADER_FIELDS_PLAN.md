@@ -1,13 +1,16 @@
 # KSeF Exporter — Expanding Extracted Invoice Attributes: Context & Execution Plan
 
-**Created:** 2026-08-28 09:09 CEST · **Updated:** 2026-08-28 10:42 CEST
+**Created:** 2026-08-28 09:09 CEST · **Updated:** 2026-08-28 16:02 CEST
 
-**Status:** Waves 0–1 of §6.5's scope are implemented and applied to both real tenant
-databases (see the new §5 entry below). Waves 2–3 (`scripts/export-invoices.py`, then API
-and UI) are not started. This document exists to brief a future agent (or a set of
-parallel subagents) on the *next* round of "read more of the XML, store it, show it" work,
-using everything already learned from doing this three times now (line items, then
-`invoice_kind`/`direction`, then net/vat/payment-due-date).
+**Status:** §6.5's scope (`net_total`, `vat_total`, `payment_due_date`) is fully shipped
+end-to-end: schema, parser, backfill, `scripts/export-invoices.py`, API, and UI (see the
+updated §5 entry below). Demoed against the real portowa tenant database via a driven
+browser session (login, Purchases and Sales tabs, both new UI elements rendering real
+data). `sale_date` and `payment_method` from §6.1's original recommended scope remain
+unstarted -- deferred by explicit choice, not oversight. This document exists to brief a
+future agent (or a set of parallel subagents) on the *next* round of "read more of the
+XML, store it, show it" work, using everything already learned from doing this three times
+now (line items, then `invoice_kind`/`direction`, then net/vat/payment-due-date).
 
 **Companion to** [`SPEC.md`](./SPEC.md), [`INVOICE_ITEMS_PLAN.md`](./INVOICE_ITEMS_PLAN.md)
 (line items — implemented), [`INVOICE_TYPES_ANALYSIS.md`](./INVOICE_TYPES_ANALYSIS.md) (the
@@ -278,9 +281,13 @@ production incident in this repo. They are not theoretical style preferences.
   `src/ksef/invoice-parser.ts`), insert-time wiring in `parsePurchaseInvoiceXml`,
   `InvoiceRow`/`NewKsefInvoice` types, and the backfill
   (`src/invoices/backfill-invoice-totals.ts` + `pnpm run backfill:invoice-totals`) are all
-  implemented and applied to both real tenant databases as of 2026-08-28. **Not yet
-  surfaced in `scripts/export-invoices.py`, the API response, or the UI** — that's Waves
-  2–3, not yet started.
+  implemented and applied to both real tenant databases as of 2026-08-28. Also surfaced in
+  `scripts/export-invoices.py` (both new money columns get the same currency format as
+  `gross_total`), the API (`GET /invoices` already spread the new `InvoiceRow` fields
+  through with no code change, confirmed by a regression test), and the UI
+  (`web/src/api/client.ts`'s `Invoice` interface, a new "Due date" column, and a net/VAT
+  breakdown line under the gross amount in `InvoicesTable.tsx`). Demoed working against
+  live portowa data via a driven browser session.
 
   Re-derived acceptance figures (current data, grown since the original §6.1 measurement
   of 249/530 rows to 253/570):
@@ -383,12 +390,12 @@ The current round covers exactly three columns from §6.1's five: **`net_total`,
 deferred to a future round, not dropped — re-check §6.1 for their presence/formula before
 picking them up again. Also confirmed for this round:
 
-- **Stop after the backfill and `scripts/export-invoices.py`.** §7 steps 7–8 (API
-  response, `web/src/api/client.ts`, `InvoicesTable.tsx`) are explicitly deferred to a
-  future iteration. `export-invoices.py` queries SQLite directly (see
-  `scripts/README.md` and the script itself) — it does not go through
-  `src/api/server.ts` at all, so this round needs no API-layer change to produce a
-  verifiable export.
+- **Initially stopped after the backfill and `scripts/export-invoices.py`** (§7 steps 7–8,
+  API response and UI, were deferred to let the owner verify the raw data first via
+  `export-invoices.py`, which queries SQLite directly and needs no API-layer change). Once
+  that verification passed, steps 7–8 were picked up the same day: `GET /invoices` needed
+  no code change (confirmed by a regression test), and the UI got a "Due date" column plus
+  a net/VAT breakdown line under the gross amount — see the updated §5 entry.
 - **Wire these three fields into the insert path, unlike `invoice_kind`.** Investigating
   the shipped `invoice_kind` precedent for this round surfaced a gap worth recording:
   `invoiceKind` is **not** part of `NewKsefInvoice`/the insert path in
