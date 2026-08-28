@@ -45,6 +45,13 @@ COLUMNS = [
 ]
 
 
+def describe_bound(value: str | None, unbounded_label: str) -> str:
+    """Human-readable effective value for a --from/--to bound: the supplied
+    date, or an explicit description of what "not supplied" means, since
+    there's no default date and None otherwise reads ambiguously."""
+    return value if value else unbounded_label
+
+
 def check_database(db_path: Path) -> None:
     """Exits with a clear message if `db_path` isn't a usable invoices database,
     instead of letting a confusing traceback surface from the query itself."""
@@ -186,10 +193,12 @@ def main() -> None:
     args = parser.parse_args()
 
     db_path = Path(args.db_path)
+    effective_from = describe_bound(args.date_from, "unbounded — earliest available")
+    effective_to = describe_bound(args.date_to, "unbounded — latest available")
     print("Parameters:")
     print(f"  db_path:     {db_path}")
-    print(f"  date_from:   {args.date_from}")
-    print(f"  date_to:     {args.date_to}")
+    print(f"  date_from:   {args.date_from}  (effective: {effective_from})")
+    print(f"  date_to:     {args.date_to}  (effective: {effective_to})")
     print(f"  output:      {args.output}")
     print()
 
