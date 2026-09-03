@@ -53,12 +53,16 @@ export interface SyncPurchaseInvoicesResult {
   diagnostics: SyncDiagnostics;
   /**
    * Heuristic: true when the new continuation point (KSeF's high-water mark)
-   * hasn't passed the end of `windowTo` yet, meaning more invoices are likely
+   * both hasn't passed the end of `windowTo` yet AND advanced since the point
+   * already persisted before this call, meaning more invoices are likely
    * still available in this window. KSeF's incremental workflow doesn't expose
    * an exact "isTruncated" flag through this aggregate result, so this compares
    * the point's instant against the exclusive end of the window -- always safe
    * to act on (calling sync again just resumes from the saved continuation
-   * point), but can over-report on the window's final day.
+   * point), but can over-report on the window's final day. The progress check
+   * exists because KSeF's own high-water mark can stall short of windowTo with
+   * no new data forthcoming; without it, a stalled mark inside a past windowTo
+   * would report hasMore forever.
    */
   hasMore: boolean;
 }
@@ -363,7 +367,15 @@ export async function syncPurchaseInvoices(
   // happened yet. Capping the comparison at "now" too means hasMore correctly
   // means "more to fetch right now", not "more once windowTo actually arrives".
   const effectiveWindowEndMs = Math.min(windowEndExclusiveMs, now());
-  const hasMore = newContinuationMs !== null && newContinuationMs < effectiveWindowEndMs;
+  // KSeF's high-water mark can also stall short of the window end with a
+  // windowTo well in the past -- if it hasn't moved since the point already
+  // persisted before this call, there is nothing this engine can do to make it
+  // move, so "still short of windowTo" alone would report hasMore forever.
+  const madeProgress =
+    storedContinuationMs === null ||
+    (newContinuationMs !== null && newContinuationMs > storedContinuationMs);
+  const hasMore =
+    newContinuationMs !== null && newContinuationMs < effectiveWindowEndMs && madeProgress;
   const needsReviewCount = invoices.filter(
     (invoice) => invoice.categorizationConfidence === "needs_review",
   ).length;

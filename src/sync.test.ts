@@ -660,6 +660,62 @@ describe("syncPurchaseInvoices", () => {
     sqlite.close();
   });
 
+  it("regression: does not report hasMore forever when the high-water mark stalls in a past window", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // Simulates the call after a truncated first page: the continuation point
+    // already persisted is exactly what KSeF returns again on this call --
+    // no new data, and windowTo is in the past, so there is nothing more this
+    // engine can do to make the high-water mark move.
+    const stalled = "2026-08-30T22:00:00+00:00";
+    await setContinuationPoint(db, "Subject2", stalled);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: stalled },
+      referenceNumbers: [],
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices, now: () => Date.parse("2026-09-03T00:00:00Z") },
+    );
+
+    expect(result.hasMore).toBe(false);
+
+    sqlite.close();
+  });
+
+  it("still reports hasMore when the high-water mark keeps advancing toward a past windowTo", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // Same shape as the stall regression above, but this call's continuation
+    // point genuinely advances past the one already stored -- real progress,
+    // still short of windowTo, so hasMore must stay true.
+    await setContinuationPoint(db, "Subject2", "2026-08-20T00:00:00+00:00");
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2026-08-25T00:00:00+00:00" },
+      referenceNumbers: [],
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices, now: () => Date.parse("2026-09-03T00:00:00Z") },
+    );
+
+    expect(result.hasMore).toBe(true);
+
+    sqlite.close();
+  });
+
   it("regression, Defect C: never rewinds the high-water mark to an earlier instant", async () => {
     const { db, sqlite } = createDb(":memory:");
     await seedCategorizationRules(db);
