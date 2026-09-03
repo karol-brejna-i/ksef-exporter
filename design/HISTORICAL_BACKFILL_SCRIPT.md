@@ -1,6 +1,6 @@
 # Historical invoice backfill script
 
-*Created: 2026-08-28 20:17 CEST · Updated: 2026-09-03 17:04 CEST*
+*Created: 2026-08-28 20:17 CEST · Updated: 2026-09-03 18:02 CEST*
 
 Reference doc for `src/tools/backfill-invoices.ts` (`pnpm run backfill:invoices`): what it does,
 how to control its scope, and why it exists alongside the normal "Import invoices" button
@@ -19,7 +19,8 @@ typically because:
 
 It was originally written for the Subject1 (sales) historical backfill in
 [SALES_INVOICES_PLAN.md](SALES_INVOICES_PLAN.md) Step 6, then generalized (2026-08-28) to
-also cover Subject2 (purchase) backfills, since both hit the exact same hazards below.
+also cover Subject2 (purchase) backfills, since both hit the exact same hazards below, then
+(2026-09-03) to run both directions by default in one invocation.
 
 ## 2. Why the UI import button can't do this
 
@@ -90,8 +91,8 @@ All control is via environment variables, read once at startup:
 | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BACKFILL_WINDOW_FROM`        | yes      | Start of the range, inclusive, `YYYY-MM-DD`.                                                                                                                                                      |
 | `BACKFILL_WINDOW_TO`          | yes      | End of the range, inclusive, `YYYY-MM-DD`.                                                                                                                                                        |
-| `BACKFILL_DIRECTION`          | no       | `purchase` (Subject2) or `sales` (Subject1, **default**).                                                                                                                                         |
-| `BACKFILL_RESET_CONTINUATION` | no       | `true` to clear the stored continuation point for the selected direction before the first call. See §2 — required whenever the window's start lies behind an already-advanced continuation point. |
+| `BACKFILL_DIRECTION`          | no       | `both` (**default**, runs purchase then sales), `purchase` (Subject2 only), or `sales` (Subject1 only).                                                                                           |
+| `BACKFILL_RESET_CONTINUATION` | no       | `true` to clear the stored continuation point for every direction being run before its first call. See §2 — required whenever the window's start lies behind an already-advanced continuation point. |
 | `BACKFILL_MAX_CALLS`          | no       | Safety cap on repeated calls (default 15). Lower it (e.g. to `1`) to make exactly one careful call — see §5.                                                                                      |
 
 Which **tenant** is affected is not a script flag at all — it follows the same env-file
@@ -106,10 +107,12 @@ BACKFILL_RESET_CONTINUATION=true \
 APP_ENV=parkowa pnpm run backfill:invoices
 ```
 
-Each run only ever touches **one tenant and one direction**. To backfill both directions,
-or both tenants, run it again with different `APP_ENV`/`BACKFILL_DIRECTION` values — never
-combine them in one invocation, since each direction has its own continuation point and its
-own independent KSeF export-init quota per tenant.
+Each run only ever touches **one tenant**, but backfills both directions by default: since
+purchase and sales each keep their own continuation point and their own independent KSeF
+export-init quota, the script runs purchase's full paced call loop and then sales's,
+one after another, and neither can push the other over its budget. Set `BACKFILL_DIRECTION`
+to `purchase` or `sales` to backfill only one. To backfill a second tenant, run the script
+again with a different `APP_ENV`.
 
 ## 6. Related docs
 
