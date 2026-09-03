@@ -20,7 +20,7 @@
  *
  * Usage:
  *   BACKFILL_WINDOW_FROM=2026-05-01 BACKFILL_WINDOW_TO=2026-08-28 \
- *     pnpm run backfill:sales
+ *     pnpm run backfill:invoices
  *
  * BACKFILL_DIRECTION selects "sales" (default, Subject1) or "purchase"
  * (Subject2) -- each direction has its own continuation point and export-init
@@ -149,6 +149,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error("Sales backfill failed:", formatKsefError(error));
+  console.error("Invoice backfill failed:", formatKsefError(error));
   process.exitCode = 1;
 });

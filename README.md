@@ -76,7 +76,7 @@ pnpm run dev:api                      # mode "development": .env (+ .env.develop
 ```
 
 The same applies to the KSeF CLI helpers that read config — `smoke:ksef`, `smoke:invoices`,
-`dump:invoices`, `backfill:sales`:
+`dump:invoices`, `backfill:invoices`:
 
 ```sh
 APP_ENV=portowa pnpm run smoke:invoices

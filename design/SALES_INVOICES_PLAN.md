@@ -292,7 +292,7 @@ Backend `pnpm test` 247/247, frontend `pnpm --dir web test` 49/49, both typechec
 Windowed pulls, one direction at a time, respecting the 20/hour export-init budget. Run by
 a human against real tenants after Step 5 ships.
 
-[`src/tools/backfill-sales.ts`](../src/tools/backfill-sales.ts) (`pnpm run backfill:sales`)
+[`src/tools/backfill-invoices.ts`](../src/tools/backfill-invoices.ts) (`pnpm run backfill:invoices`)
 drives this: it repeatedly calls `syncPurchaseInvoices(..., { direction: "sales" })` against
 the live database named by `DATABASE_PATH`/`.env`, recording a `sync_runs` row per call
 (mirroring `POST /sync`'s bookkeeping exactly). One tenant per invocation — `.env` selects

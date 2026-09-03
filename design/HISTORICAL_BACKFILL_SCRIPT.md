@@ -2,7 +2,7 @@
 
 *Created: 2026-08-28 20:17 CEST · Updated: 2026-09-03 17:04 CEST*
 
-Reference doc for `src/tools/backfill-sales.ts` (`pnpm run backfill:sales`): what it does,
+Reference doc for `src/tools/backfill-invoices.ts` (`pnpm run backfill:invoices`): what it does,
 how to control its scope, and why it exists alongside the normal "Import invoices" button
 in the web UI instead of replacing it.
 
@@ -27,12 +27,12 @@ The UI's "Import invoices" button (`web/src/components/SyncButton.tsx`) and the 
 ultimately call the same `syncPurchaseInvoices()` (`src/sync.ts`), but the UI wraps it with
 choices appropriate for routine use, not historical backfills:
 
-| Capability | UI button | Script |
-| --- | --- | --- |
-| Reset the stored continuation point | No | Yes (`BACKFILL_RESET_CONTINUATION=true`) |
-| Repeat calls automatically until done | No — one click = one call | Yes, paced loop with a safety cap |
-| Pacing between repeated calls | N/A (manual clicks) | Fixed 3s delay |
-| Runs without a logged-in browser session | No | Yes (CLI, uses `.env`/`APP_ENV` directly) |
+| Capability                               | UI button                 | Script                                    |
+| ---------------------------------------- | ------------------------- | ----------------------------------------- |
+| Reset the stored continuation point      | No                        | Yes (`BACKFILL_RESET_CONTINUATION=true`)  |
+| Repeat calls automatically until done    | No — one click = one call | Yes, paced loop with a safety cap         |
+| Pacing between repeated calls            | N/A (manual clicks)       | Fixed 3s delay                            |
+| Runs without a logged-in browser session | No                        | Yes (CLI, uses `.env`/`APP_ENV` directly) |
 
 The blocking issue is the **first row**. A stored continuation point (`sync_state`) that
 falls inside the requested window silently overrides `windowFrom` — see
@@ -86,13 +86,13 @@ an explicit continuation reset and an unattended repeat loop.
 
 All control is via environment variables, read once at startup:
 
-| Variable | Required | Meaning |
-| --- | --- | --- |
-| `BACKFILL_WINDOW_FROM` | yes | Start of the range, inclusive, `YYYY-MM-DD`. |
-| `BACKFILL_WINDOW_TO` | yes | End of the range, inclusive, `YYYY-MM-DD`. |
-| `BACKFILL_DIRECTION` | no | `purchase` (Subject2) or `sales` (Subject1, **default**). |
-| `BACKFILL_RESET_CONTINUATION` | no | `true` to clear the stored continuation point for the selected direction before the first call. See §2 — required whenever the window's start lies behind an already-advanced continuation point. |
-| `BACKFILL_MAX_CALLS` | no | Safety cap on repeated calls (default 15). Lower it (e.g. to `1`) to make exactly one careful call — see §5. |
+| Variable                      | Required | Meaning                                                                                                                                                                                           |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BACKFILL_WINDOW_FROM`        | yes      | Start of the range, inclusive, `YYYY-MM-DD`.                                                                                                                                                      |
+| `BACKFILL_WINDOW_TO`          | yes      | End of the range, inclusive, `YYYY-MM-DD`.                                                                                                                                                        |
+| `BACKFILL_DIRECTION`          | no       | `purchase` (Subject2) or `sales` (Subject1, **default**).                                                                                                                                         |
+| `BACKFILL_RESET_CONTINUATION` | no       | `true` to clear the stored continuation point for the selected direction before the first call. See §2 — required whenever the window's start lies behind an already-advanced continuation point. |
+| `BACKFILL_MAX_CALLS`          | no       | Safety cap on repeated calls (default 15). Lower it (e.g. to `1`) to make exactly one careful call — see §5.                                                                                      |
 
 Which **tenant** is affected is not a script flag at all — it follows the same env-file
 selection as everything else in the repo (`APP_ENV=<tenant>`, see `README.md` "Selecting an
@@ -103,7 +103,7 @@ BACKFILL_DIRECTION=purchase \
 BACKFILL_WINDOW_FROM=2026-06-01 \
 BACKFILL_WINDOW_TO=2026-08-31 \
 BACKFILL_RESET_CONTINUATION=true \
-APP_ENV=parkowa pnpm run backfill:sales
+APP_ENV=parkowa pnpm run backfill:invoices
 ```
 
 Each run only ever touches **one tenant and one direction**. To backfill both directions,
@@ -111,58 +111,7 @@ or both tenants, run it again with different `APP_ENV`/`BACKFILL_DIRECTION` valu
 combine them in one invocation, since each direction has its own continuation point and its
 own independent KSeF export-init quota per tenant.
 
-## 5. A real hazard this script exposed: `hasMore` and a future `windowTo`
-
-`hasMore` is a heuristic (`src/sync.ts`): before 2026-08-28 it compared the new continuation
-point only against `windowTo`, and couldn't tell "no more data because the window is
-exhausted" apart from "no more data because we haven't reached `windowTo` yet — which
-hasn't happened in real life yet either." If `windowTo` was today or later, `hasMore` stayed
-`true` forever: KSeF's own high-water mark advances to roughly "now" once it finds nothing
-new, and "now" keeps creeping forward on every poll but never reaches a `windowTo` that
-hasn't happened yet.
-
-Confirmed running this exact scenario for `parkowa` (2026-06-01→2026-08-31, the 31st being
-a few days in the future): call 1 fetched everything available (461 invoices, 212 new);
-calls 2 through 15 each returned zero and still reported `hasMore: true`, burning 14 real
-export-init requests for nothing before the safety cap kicked in.
-
-**Fixed** (same day, `src/sync.ts`): `hasMore` now also bounds the comparison by the
-injectable `now()` clock — `effectiveWindowEndMs = min(windowEndExclusiveMs, now())` — so it
-means "more to fetch right now", not "more once `windowTo` eventually arrives". This is a
-read-only heuristic computed after persistence completes; it changes nothing about what's
-fetched, how continuation points are persisted, or `maxIterations`. Reviewed by the
-`sync-rate-limit-reviewer` subagent (PASS) and covered by two tests in `src/sync.test.ts`
-("Defect C" and the future-`windowTo` regression).
-
-With the fix, a future `windowTo` is safe to leave at the default `BACKFILL_MAX_CALLS` — the
-loop now stops on its own once it catches up to wall-clock time, the same way it always has
-for a `windowTo` in the past.
-
-## 6. A second variant: `hasMore` and a stalled high-water mark in a past window
-
-The §5 fix bounded `hasMore` by wall-clock time, but it still compared only the freshly
-returned continuation point against the window's end — never against the point already
-persisted before the call. That left a second way for `hasMore` to never settle: if KSeF's
-own high-water mark (`permanentStorageHwmDate`/`lastPermanentStorageDate`) stops advancing
-between calls with no new data, "still short of `windowTo`" can stay true indefinitely even
-though nothing this engine does will move it further, because "short of the window end" was
-never the same claim as "made progress since last time."
-
-Confirmed running `parkowa`'s purchase backfill (2026-08-01→2026-08-31, run on 2026-09-03 —
-`windowTo` fully in the past): call 1 fetched 160 invoices (all duplicates) and advanced the
-continuation point to `2026-08-30T22:00:00+00:00`; calls 2 through 7 each fetched 0 and kept
-reporting `hasMore: true` with that exact same continuation point, never advancing, until the
-run was stopped by hand.
-
-**Fixed** (2026-09-03, `src/sync.ts`): `hasMore` now also requires that the new continuation
-point advanced past the one already stored before this call —
-`madeProgress = storedContinuationMs === null || newContinuationMs > storedContinuationMs`.
-Same "always safe to act on" property as the §5 fix: read-only, changes nothing about what's
-fetched, how continuation points are persisted, or `maxIterations`. Reviewed by the
-`sync-rate-limit-reviewer` subagent (PASS) and covered by two tests in `src/sync.test.ts`
-("stalls in a past window" and "keeps advancing toward a past windowTo").
-
-## 7. Related docs
+## 6. Related docs
 
 - [SALES_INVOICES_PLAN.md](SALES_INVOICES_PLAN.md) — original Subject1 backfill plan and
   run log this script was written for.
