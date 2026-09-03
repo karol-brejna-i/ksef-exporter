@@ -181,3 +181,34 @@ export function fetchInvoiceItems(
 ): Promise<{ items: InvoiceItem[] }> {
   return request(`/invoices/${invoiceId}/items`, {}, token);
 }
+
+export interface InvoiceExportDownload {
+  blob: Blob;
+  filename: string;
+}
+
+export async function fetchInvoiceExport(
+  token: string,
+  from?: string,
+  to?: string,
+): Promise<InvoiceExportDownload> {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const query = params.toString();
+
+  const response = await fetch(`/api/invoices/export${query ? `?${query}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = typeof body?.error === "string" ? body.error : "Export failed";
+    throw new ApiError(message, response.status);
+  }
+
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "invoices-export.xlsx";
+  const blob = await response.blob();
+  return { blob, filename };
+}

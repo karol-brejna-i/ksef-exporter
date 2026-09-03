@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import ExcelJS from "exceljs";
 import type { FastifyInstance } from "fastify";
 import { KsefRateLimitError, KsefValidationError } from "ksef-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -399,6 +400,98 @@ describe("API server", () => {
       });
 
       expect(response.statusCode).toBe(400);
+    });
+  });
+
+  describe("GET /invoices/export", () => {
+    it("rejects a request without a token", async () => {
+      const response = await fastify.inject({ method: "GET", url: "/invoices/export" });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("rejects a malformed from/to query param with 400", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices/export?from=not-a-date",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it("rejects from after to with 400", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices/export?from=2025-02-01&to=2025-01-01",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it("returns 404 when no invoices match the given criteria", async () => {
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices/export",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({ error: "No invoices found for the given criteria." });
+    });
+
+    it("returns an xlsx workbook when invoices exist", async () => {
+      await insertKsefInvoiceIfNotExists(db, SAMPLE_INVOICE);
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices/export",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-type"]).toBe(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      expect(response.headers["content-disposition"]).toContain("attachment; filename=");
+
+      const workbook = new ExcelJS.Workbook();
+      // exceljs' .load() types its Buffer param via its own shadow type,
+      // incompatible with @types/node's Buffer -- see extract-xlsx.ts.
+      // biome-ignore lint/suspicious/noExplicitAny: see comment above
+      await workbook.xlsx.load(response.rawPayload as any);
+      expect(workbook.worksheets.map((w) => w.name)).toEqual(["Faktury", "Pozycje"]);
+    });
+
+    it("narrows results by from/to query params", async () => {
+      await insertKsefInvoiceIfNotExists(db, { ...SAMPLE_INVOICE, issueDate: "2025-01-15" });
+      await insertKsefInvoiceIfNotExists(db, {
+        ...SAMPLE_INVOICE,
+        ksefNumber: "5265877635-20250215-123456789012-02",
+        issueDate: "2025-02-15",
+      });
+      const token = await login();
+
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/invoices/export?from=2025-01-01&to=2025-01-31",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const workbook = new ExcelJS.Workbook();
+      // biome-ignore lint/suspicious/noExplicitAny: exceljs Buffer-type mismatch, see above
+      await workbook.xlsx.load(response.rawPayload as any);
+      const worksheet = workbook.getWorksheet("Faktury");
+      expect(worksheet?.rowCount).toBe(2);
     });
   });
 

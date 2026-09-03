@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -105,5 +105,22 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /import invoices/i }));
 
     await vi.waitFor(() => expect(fetchInvoices).toHaveBeenCalledTimes(2));
+  });
+
+  it("navigates to the Export screen and shows the export trigger", async () => {
+    vi.spyOn(apiClient, "login").mockResolvedValue({ token: "jwt-token" });
+    vi.spyOn(apiClient, "fetchCategories").mockResolvedValue({ categories: [] });
+    vi.spyOn(apiClient, "fetchInvoices").mockResolvedValue({ invoices: [] });
+    const user = userEvent.setup();
+
+    render(<App />);
+    await logIn(user);
+    await screen.findByText(/no invoices yet/i);
+
+    await user.click(screen.getByRole("button", { name: "Export" }));
+
+    const exportSection = screen.getByRole("region", { name: "Export" });
+    expect(exportSection).toBeInTheDocument();
+    expect(within(exportSection).getByRole("button", { name: /export/i })).toBeInTheDocument();
   });
 });

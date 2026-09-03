@@ -22,9 +22,11 @@ import {
   markSyncRunSuccess,
 } from "../db/sync-runs.js";
 import { getContinuationPoint } from "../db/sync-state.js";
+import { fetchExportInvoiceItems, fetchExportInvoices } from "../invoices/export-invoices.js";
+import { buildInvoicesWorkbook } from "../invoices/export-invoices-workbook.js";
 import { classifyKsefError } from "../ksef/rate-limit.js";
 import { SUBJECT_TYPE_BY_DIRECTION, syncPurchaseInvoices } from "../sync.js";
-import { isIsoDate } from "../time.js";
+import { type IsoDate, isIsoDate } from "../time.js";
 import { verifyCredentials } from "./auth.js";
 
 declare module "fastify" {
@@ -86,6 +88,29 @@ const invoiceQuerySchema = z.object({
 const invoiceIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
+
+const invoiceExportQuerySchema = z
+  .object({
+    from: z
+      .string()
+      .min(1)
+      .refine(isIsoDate, "from must be a valid date formatted as YYYY-MM-DD")
+      .optional(),
+    to: z
+      .string()
+      .min(1)
+      .refine(isIsoDate, "to must be a valid date formatted as YYYY-MM-DD")
+      .optional(),
+  })
+  .refine((data) => !data.from || !data.to || data.from <= data.to, {
+    message: "from must not be after to",
+  });
+
+/** e.g. "invoices-export-2026-05-01_2026-06-30.xlsx", or "...-all.xlsx" when unbounded. */
+function buildExportFilename(from: string | undefined, to: string | undefined): string {
+  if (!from && !to) return "invoices-export-all.xlsx";
+  return `invoices-export-${from ?? "start"}_${to ?? "end"}.xlsx`;
+}
 
 /** Stage-scoped events are named `sync.<stage>.<phase>`; `sync.started`/`sync.completed` aren't. */
 function stageOfEvent(event: string): string | null {
@@ -288,6 +313,32 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       return { items };
     },
   );
+
+  fastify.get("/invoices/export", { onRequest: [fastify.authenticate] }, async (request, reply) => {
+    const parsed = invoiceExportQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid query" });
+    }
+
+    const { from, to } = parsed.data;
+    const invoiceRows = await fetchExportInvoices(deps.db, {
+      ...(from ? { from: from as IsoDate } : {}),
+      ...(to ? { to: to as IsoDate } : {}),
+    });
+
+    if (invoiceRows.length === 0) {
+      return reply.code(404).send({ error: "No invoices found for the given criteria." });
+    }
+
+    const itemRows = await fetchExportInvoiceItems(deps.db, invoiceRows);
+    const workbook = buildInvoicesWorkbook(invoiceRows, itemRows);
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    return reply
+      .type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .header("content-disposition", `attachment; filename="${buildExportFilename(from, to)}"`)
+      .send(Buffer.from(buffer));
+  });
 
   fastify.get("/categories", { onRequest: [fastify.authenticate] }, async () => {
     const categories = await listCategories(deps.db);

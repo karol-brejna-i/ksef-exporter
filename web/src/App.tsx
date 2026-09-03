@@ -7,13 +7,14 @@ import {
   type Invoice,
   type InvoiceDirection,
 } from "./api/client";
+import { ExportButton } from "./components/ExportButton";
 import { InvoicesSummary } from "./components/InvoicesSummary";
 import { InvoicesTable } from "./components/InvoicesTable";
 import { LoginForm } from "./components/LoginForm";
 import { RecentImports } from "./components/RecentImports";
 import { SyncButton } from "./components/SyncButton";
 
-type Screen = "invoices" | "import";
+type Screen = "invoices" | "import" | "export";
 
 export function App() {
   // The JWT is kept only in memory (React state), never in localStorage or
@@ -97,6 +98,13 @@ export function App() {
         >
           Import
         </button>
+        <button
+          type="button"
+          aria-current={screen === "export" ? "page" : undefined}
+          onClick={() => setScreen("export")}
+        >
+          Export
+        </button>
       </nav>
       {error && <p role="alert">{error}</p>}
       {screen === "invoices" ? (
@@ -128,6 +136,10 @@ export function App() {
               onCorrected={handleCorrected}
             />
           )}
+        </section>
+      ) : screen === "export" ? (
+        <section aria-label="Export">
+          <ExportButton token={token} />
         </section>
       ) : (
         <section aria-label="Import">
