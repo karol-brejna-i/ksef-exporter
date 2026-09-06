@@ -96,6 +96,15 @@ export const invoices = sqliteTable(
     itemsExtractedAt: integer("items_extracted_at", { mode: "timestamp_ms" }),
     categoryId: integer("category_id").references(() => categories.id),
     /**
+     * Which sync run inserted this row. Null for manual entries and for any
+     * KSeF row inserted before this column existed -- backfilling it would
+     * assert traceability we don't actually have. See
+     * design/KSEF_PAGINATION_AND_HASMORE.md §7.4: this replaces the previous
+     * fragile time-range join between sync_runs and invoices.created_at,
+     * which misses duplicates (a duplicate keeps its original created_at).
+     */
+    syncRunId: integer("sync_run_id").references(() => syncRuns.id),
+    /**
      * "matched": a Tier-1 rule confidently assigned the category (SPEC §4).
      * "needs_review": no rule matched; awaiting human confirmation (HU-03).
      * "not_applicable": sales invoices, which are never categorized — without
@@ -302,6 +311,23 @@ export const syncRuns = sqliteTable(
     categorizedCount: integer("categorized_count"),
     needsReviewCount: integer("needs_review_count"),
     hasMore: integer("has_more", { mode: "boolean" }),
+    /**
+     * KSeF's own authoritative "more data in this window" signal
+     * (InvoicePackage.isTruncated), once the SDK's exportsIncremental
+     * wrapper is bypassed to surface it. Null on rows predating that change
+     * and on error rows where no package was ever returned. See
+     * design/KSEF_PAGINATION_AND_HASMORE.md.
+     */
+    isTruncated: integer("is_truncated", { mode: "boolean" }),
+    /**
+     * Why `hasMore` has its value, for diagnostics -- replaces having to
+     * reverse-engineer intent from timestamps the way
+     * design/KSEF_PAGINATION_AND_HASMORE.md's investigation had to. Null on
+     * rows predating this column.
+     */
+    hasMoreReason: text("has_more_reason", {
+      enum: ["truncated", "window_exhausted", "stalled"],
+    }),
     maxIterations: integer("max_iterations"),
     errorType: text("error_type"),
     errorCode: text("error_code"),
@@ -319,6 +345,14 @@ export const syncRuns = sqliteTable(
       sql`${table.subjectType} IS NULL OR ${table.subjectType} IN ('Subject1', 'Subject2')`,
     ),
     check("sync_runs_has_more_bool", sql`${table.hasMore} IS NULL OR ${table.hasMore} IN (0, 1)`),
+    check(
+      "sync_runs_is_truncated_bool",
+      sql`${table.isTruncated} IS NULL OR ${table.isTruncated} IN (0, 1)`,
+    ),
+    check(
+      "sync_runs_has_more_reason_enum",
+      sql`${table.hasMoreReason} IS NULL OR ${table.hasMoreReason} IN ('truncated', 'window_exhausted', 'stalled')`,
+    ),
     check(
       "sync_runs_window_from_iso",
       sql`${table.windowFrom} GLOB ${ISO_DATE_GLOB} AND ${table.windowFrom} IS date(${table.windowFrom})`,

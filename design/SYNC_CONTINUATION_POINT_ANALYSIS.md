@@ -144,3 +144,6 @@ const hasMore = newContinuationPoint !== undefined && newContinuationPoint < opt
 
 The UI therefore advised clicking Import again, which would spend export quota for no new invoices.
 Not the cause of the reported failure, and not addressed by this fix.
+
+Superseded by [design/KSEF_PAGINATION_AND_HASMORE.md](KSEF_PAGINATION_AND_HASMORE.md) (2026-09-06),
+which traces this to the SDK discarding `isTruncated` and confirms it against live production data.

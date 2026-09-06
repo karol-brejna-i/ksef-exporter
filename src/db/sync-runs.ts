@@ -1,4 +1,5 @@
 import { desc, eq } from "drizzle-orm";
+import type { HasMoreReason } from "../sync.js";
 import type { Db } from "./client.js";
 import { syncRuns } from "./schema.js";
 
@@ -30,6 +31,10 @@ export interface SyncRun {
   /** NULL as above; 0 means every extraction attempted in the run succeeded. */
   itemsFailedCount: number | null;
   hasMore: boolean | null;
+  /** KSeF's raw isTruncated signal for the run's fetched package; see design/KSEF_PAGINATION_AND_HASMORE.md. */
+  isTruncated: boolean | null;
+  /** Why hasMore has its value; see src/sync.ts's HasMoreReason JSDoc. */
+  hasMoreReason: HasMoreReason | null;
   maxIterations: number | null;
   errorType: string | null;
   errorCode: string | null;
@@ -65,6 +70,8 @@ export interface SyncRunSuccessDiagnostics {
   itemsInsertedCount: number;
   itemsFailedCount: number;
   hasMore: boolean;
+  isTruncated: boolean | null;
+  hasMoreReason: HasMoreReason | null;
 }
 
 export interface SyncRunErrorDiagnostics {

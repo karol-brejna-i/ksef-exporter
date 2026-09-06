@@ -57,6 +57,8 @@ describe("sync-runs repository", () => {
       itemsInsertedCount: 96,
       itemsFailedCount: 1,
       hasMore: false,
+      isTruncated: false,
+      hasMoreReason: "window_exhausted",
     });
 
     expect(updated.status).toBe("success");
@@ -69,6 +71,8 @@ describe("sync-runs repository", () => {
     expect(updated.hasMore).toBe(false);
     expect(updated.itemsInsertedCount).toBe(96);
     expect(updated.itemsFailedCount).toBe(1);
+    expect(updated.isTruncated).toBe(false);
+    expect(updated.hasMoreReason).toBe("window_exhausted");
   });
 
   it("records zero line-item counters distinctly from the NULL of an unrecorded run", async () => {
@@ -94,6 +98,8 @@ describe("sync-runs repository", () => {
       itemsInsertedCount: 0,
       itemsFailedCount: 0,
       hasMore: false,
+      isTruncated: null,
+      hasMoreReason: null,
     });
 
     expect(updated.itemsInsertedCount).toBe(0);
@@ -138,6 +144,8 @@ describe("sync-runs repository", () => {
         itemsInsertedCount: 0,
         itemsFailedCount: 0,
         hasMore: false,
+        isTruncated: null,
+        hasMoreReason: null,
       }),
     ).rejects.toThrow();
     await expect(

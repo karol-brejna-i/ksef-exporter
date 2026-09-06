@@ -45,6 +45,8 @@ export interface InvoiceRow {
   /** NULL = line-item extraction never attempted; see design/INVOICE_ITEMS_PLAN.md §6.3. */
   itemsExtractedAt: Date | null;
   categoryId: number | null;
+  /** Which sync run inserted this row; see design/KSEF_PAGINATION_AND_HASMORE.md §7.4. */
+  syncRunId: number | null;
   categorizationConfidence: CategorizationConfidence;
   createdAt: Date;
 }
@@ -67,6 +69,8 @@ export interface NewKsefInvoice {
   direction?: InvoiceDirection;
   /** Sales invoices are never categorized; sync.ts sets this to "not_applicable" for them. */
   categorizationConfidence?: CategorizationConfidence;
+  /** Which sync run is inserting this row; omitted (null) for backfills predating this column. */
+  syncRunId?: number | null;
 }
 
 export interface NewManualInvoice {

@@ -557,16 +557,20 @@ describe("syncPurchaseInvoices", () => {
     sqlite.close();
   });
 
-  it("reports hasMore when the new continuation point hasn't reached windowTo yet", async () => {
+  it("reports hasMore when isTruncated is true and the continuation point hasn't reached windowTo yet", async () => {
     const { db, sqlite } = createDb(":memory:");
     await seedCategorizationRules(db);
 
+    // A genuinely truncated, non-empty page: KSeF is telling us directly
+    // there's more to send in this window, well short of the requested
+    // windowTo (the 31st). An empty page can never be truncated (see the
+    // dedicated zero-invoices regression below), so this fixture returns a
+    // real invoice.
     const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
-      invoices: [],
-      // Truncated/partial page: KSeF's HWM only advanced to the 15th, well
-      // short of the requested windowTo (the 31st).
+      invoices: [record()],
       continuationPoints: { Subject2: "2025-01-15T00:00:00Z" },
       referenceNumbers: ["ref-1"],
+      isTruncated: true,
     });
 
     const result = await syncPurchaseInvoices(
@@ -577,6 +581,7 @@ describe("syncPurchaseInvoices", () => {
     );
 
     expect(result.hasMore).toBe(true);
+    expect(result.hasMoreReason).toBe("truncated");
 
     sqlite.close();
   });
@@ -588,8 +593,223 @@ describe("syncPurchaseInvoices", () => {
     const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
       invoices: [],
       // Past the exclusive end of the window (2025-02-01T00:00Z), so the whole
-      // window has been covered.
+      // window has been covered -- not truncated, and the window is exhausted.
       continuationPoints: { Subject2: "2025-02-01T00:00:00+00:00" },
+      referenceNumbers: ["ref-1"],
+      isTruncated: false,
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    expect(result.hasMore).toBe(false);
+    expect(result.hasMoreReason).toBe("window_exhausted");
+
+    sqlite.close();
+  });
+
+  it("regression, Defect C: correctly parses a continuation point on the final day of the window", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // Empty, non-truncated page: per
+    // design/KSEF_PAGINATION_AND_HASMORE.md §5 item 3, "reports hasMore=true
+    // for a fetch with zero invoices" is an impossible state once isTruncated
+    // is honored, so this is re-derived as isTruncated: false. The point this
+    // test still guards -- correctly parsing an instant that shares windowTo's
+    // date prefix -- is exercised directly below via a numeric comparison
+    // (the original Defect C bug compared these lexicographically).
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2026-08-31T05:00:00+00:00" },
+      referenceNumbers: [],
+      isTruncated: false,
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices, now: () => Date.parse("2026-09-01T00:00:00Z") },
+    );
+
+    // Lexicographically the instant sorts after the bare date, which used to
+    // report the import complete while the rest of the 31st went unimported.
+    // Numerically it is still short of the window's exclusive end
+    // (2026-09-01T00:00Z), so the correct outcome is "stalled", not
+    // "window_exhausted".
+    expect("2026-08-31T05:00:00+00:00" < "2026-08-31").toBe(false);
+    expect(result.hasMore).toBe(false);
+    expect(result.hasMoreReason).toBe("stalled");
+
+    sqlite.close();
+  });
+
+  it("regression: does not report hasMore forever when windowTo is in the future", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // KSeF found nothing new and its own high-water mark sits a realistic
+    // ~120s *behind* the injected clock (design/KSEF_PAGINATION_AND_HASMORE.md
+    // §3: the measured gap in production is always behind, never ahead --
+    // the round trip from export-init to our own now() read takes that long).
+    // windowTo is still 3 days away. isTruncated: false is the real signal
+    // driving this; the old timestamp-vs-"now" comparison this replaces would
+    // have reported hasMore forever here since "now" always creeps forward
+    // but windowTo never arrives on its own.
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2026-08-28T17:58:00+00:00" },
+      referenceNumbers: [],
+      isTruncated: false,
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-06-01", windowTo: "2026-08-31" },
+      { fetchInvoices, now: () => Date.parse("2026-08-28T18:00:00Z") },
+    );
+
+    expect(result.hasMore).toBe(false);
+    expect(result.hasMoreReason).toBe("stalled");
+
+    sqlite.close();
+  });
+
+  it("regression: does not report hasMore forever when the high-water mark stalls in a past window", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // Simulates the call after a truncated first page: the continuation point
+    // already persisted is exactly what KSeF returns again on this call --
+    // no new data (isTruncated: false), and windowTo is in the past, but the
+    // point hasn't reached the window's end either, so this is "stalled", not
+    // "window_exhausted".
+    const stalled = "2026-08-30T22:00:00+00:00";
+    await setContinuationPoint(db, "Subject2", stalled);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: stalled },
+      referenceNumbers: [],
+      isTruncated: false,
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices, now: () => Date.parse("2026-09-03T00:00:00Z") },
+    );
+
+    expect(result.hasMore).toBe(false);
+    expect(result.hasMoreReason).toBe("stalled");
+
+    sqlite.close();
+  });
+
+  it("still reports hasMore when isTruncated stays true, even with windowTo already in the past", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // Same shape as the stall regression above (windowTo already elapsed,
+    // continuation point still short of the window end), but this time KSeF
+    // reports isTruncated: true with real data -- demonstrating that the
+    // defensive AND against effectiveWindowEndMs doesn't accidentally
+    // suppress a genuine truncated signal just because windowTo is in the
+    // past.
+    await setContinuationPoint(db, "Subject2", "2026-08-20T00:00:00+00:00");
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record()],
+      continuationPoints: { Subject2: "2026-08-25T00:00:00+00:00" },
+      referenceNumbers: ["ref-1"],
+      isTruncated: true,
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
+      { fetchInvoices, now: () => Date.parse("2026-09-03T00:00:00Z") },
+    );
+
+    expect(result.hasMore).toBe(true);
+    expect(result.hasMoreReason).toBe("truncated");
+
+    sqlite.close();
+  });
+
+  it("regression: never reports hasMore for a fetch that returns zero invoices without isTruncated (the live incident)", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // Reproduces the exact has_more=1/fetched_count=0 shape from
+    // design/KSEF_PAGINATION_AND_HASMORE.md §3 (measured on both tenants:
+    // parkowa sync_runs 49-51, portowa 31-35) -- an empty page, continuation
+    // point a realistic ~120s behind "now", windowTo effectively today. This
+    // combination must never again produce hasMore: true; it wasted an
+    // export-init call on every occurrence before this fix.
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [],
+      continuationPoints: { Subject2: "2026-09-06T11:57:58+00:00" },
+      referenceNumbers: [],
+      isTruncated: false,
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2026-09-01", windowTo: "2026-09-06" },
+      { fetchInvoices, now: () => Date.parse("2026-09-06T12:00:00Z") },
+    );
+
+    expect(result.diagnostics.fetchedCount).toBe(0);
+    expect(result.hasMore).toBe(false);
+    expect(result.hasMoreReason).toBe("stalled");
+
+    sqlite.close();
+  });
+
+  it("reports hasMore true for a fetch that returns invoices with isTruncated true", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record()],
+      continuationPoints: { Subject2: "2025-01-15T00:00:00Z" },
+      referenceNumbers: ["ref-1"],
+      isTruncated: true,
+    });
+
+    const result = await syncPurchaseInvoices(
+      db,
+      fakeClient(),
+      { windowFrom: "2025-01-01", windowTo: "2025-01-31" },
+      { fetchInvoices },
+    );
+
+    expect(result.diagnostics.fetchedCount).toBe(1);
+    expect(result.hasMore).toBe(true);
+    expect(result.hasMoreReason).toBe("truncated");
+
+    sqlite.close();
+  });
+
+  it("fails closed (hasMore false, hasMoreReason null) when isTruncated is not populated", async () => {
+    const { db, sqlite } = createDb(":memory:");
+    await seedCategorizationRules(db);
+
+    // Older/incomplete fetch fakes (or a real caller predating the isTruncated
+    // plumbing) omit the field entirely -- must never be treated as "true".
+    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
+      invoices: [record()],
+      continuationPoints: { Subject2: "2025-01-15T00:00:00Z" },
       referenceNumbers: ["ref-1"],
     });
 
@@ -601,117 +821,7 @@ describe("syncPurchaseInvoices", () => {
     );
 
     expect(result.hasMore).toBe(false);
-
-    sqlite.close();
-  });
-
-  it("regression, Defect C: reports hasMore for a point on the final day of the window", async () => {
-    const { db, sqlite } = createDb(":memory:");
-    await seedCategorizationRules(db);
-
-    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
-      invoices: [],
-      continuationPoints: { Subject2: "2026-08-31T05:00:00+00:00" },
-      referenceNumbers: ["ref-1"],
-    });
-
-    const result = await syncPurchaseInvoices(
-      db,
-      fakeClient(),
-      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
-      // hasMore is also capped by wall-clock "now" (see the future-windowTo
-      // regression test below), so this must inject a "now" past the window
-      // for the scenario -- "the 31st has already happened" -- to hold.
-      { fetchInvoices, now: () => Date.parse("2026-09-01T00:00:00Z") },
-    );
-
-    // Lexicographically the instant sorts after the bare date, which used to
-    // report the import complete while the rest of the 31st went unimported.
-    expect("2026-08-31T05:00:00+00:00" < "2026-08-31").toBe(false);
-    expect(result.hasMore).toBe(true);
-
-    sqlite.close();
-  });
-
-  it("regression: does not report hasMore forever when windowTo is in the future", async () => {
-    const { db, sqlite } = createDb(":memory:");
-    await seedCategorizationRules(db);
-
-    // KSeF found nothing new and advanced its high-water mark to roughly
-    // "now" (a few seconds after the injected clock), not to windowTo, which
-    // is still 3 days away -- comparing only against windowTo would report
-    // hasMore forever since "now" always creeps forward but windowTo never
-    // arrives on its own.
-    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
-      invoices: [],
-      continuationPoints: { Subject2: "2026-08-28T18:00:05+00:00" },
-      referenceNumbers: [],
-    });
-
-    const result = await syncPurchaseInvoices(
-      db,
-      fakeClient(),
-      { windowFrom: "2026-06-01", windowTo: "2026-08-31" },
-      { fetchInvoices, now: () => Date.parse("2026-08-28T18:00:00Z") },
-    );
-
-    expect(result.hasMore).toBe(false);
-
-    sqlite.close();
-  });
-
-  it("regression: does not report hasMore forever when the high-water mark stalls in a past window", async () => {
-    const { db, sqlite } = createDb(":memory:");
-    await seedCategorizationRules(db);
-
-    // Simulates the call after a truncated first page: the continuation point
-    // already persisted is exactly what KSeF returns again on this call --
-    // no new data, and windowTo is in the past, so there is nothing more this
-    // engine can do to make the high-water mark move.
-    const stalled = "2026-08-30T22:00:00+00:00";
-    await setContinuationPoint(db, "Subject2", stalled);
-
-    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
-      invoices: [],
-      continuationPoints: { Subject2: stalled },
-      referenceNumbers: [],
-    });
-
-    const result = await syncPurchaseInvoices(
-      db,
-      fakeClient(),
-      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
-      { fetchInvoices, now: () => Date.parse("2026-09-03T00:00:00Z") },
-    );
-
-    expect(result.hasMore).toBe(false);
-
-    sqlite.close();
-  });
-
-  it("still reports hasMore when the high-water mark keeps advancing toward a past windowTo", async () => {
-    const { db, sqlite } = createDb(":memory:");
-    await seedCategorizationRules(db);
-
-    // Same shape as the stall regression above, but this call's continuation
-    // point genuinely advances past the one already stored -- real progress,
-    // still short of windowTo, so hasMore must stay true.
-    await setContinuationPoint(db, "Subject2", "2026-08-20T00:00:00+00:00");
-
-    const fetchInvoices = async (): Promise<FetchPurchaseInvoicesResult> => ({
-      invoices: [],
-      continuationPoints: { Subject2: "2026-08-25T00:00:00+00:00" },
-      referenceNumbers: [],
-    });
-
-    const result = await syncPurchaseInvoices(
-      db,
-      fakeClient(),
-      { windowFrom: "2026-08-01", windowTo: "2026-08-31" },
-      { fetchInvoices, now: () => Date.parse("2026-09-03T00:00:00Z") },
-    );
-
-    expect(result.hasMore).toBe(true);
+    expect(result.hasMoreReason).toBeNull();
 
     sqlite.close();
   });
@@ -1089,6 +1199,7 @@ describe("syncPurchaseInvoices", () => {
       durationMs: 1000,
       invoiceCount: result.invoices.length,
       hasMore: result.hasMore,
+      hasMoreReason: result.hasMoreReason,
       ...result.diagnostics,
     });
 

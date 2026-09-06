@@ -46,25 +46,55 @@ export interface SyncPurchaseInvoicesOptions {
    * direction, keyed to its own continuation point in `sync_state`.
    */
   direction?: InvoiceDirection;
+  /**
+   * The `sync_runs` row this call is part of, threaded onto every invoice it
+   * inserts (design/KSEF_PAGINATION_AND_HASMORE.md §7.4). Omitted by callers
+   * that don't yet track one; left null on those rows rather than guessed.
+   */
+  syncRunId?: number;
 }
+
+/**
+ * Why `syncPurchaseInvoices` did or didn't report `hasMore` (see the JSDoc on
+ * `SyncPurchaseInvoicesResult.hasMore` for the decision itself). These three
+ * exact string values are committed into `sync_runs.has_more_reason`'s CHECK
+ * constraint (`drizzle/migrations/0012_stale_khan.sql`) -- do not add, rename,
+ * or remove a value here without a migration to match.
+ */
+export type HasMoreReason = "truncated" | "window_exhausted" | "stalled";
 
 export interface SyncPurchaseInvoicesResult {
   invoices: InvoiceRow[];
   diagnostics: SyncDiagnostics;
   /**
-   * Heuristic: true when the new continuation point (KSeF's high-water mark)
-   * both hasn't passed the end of `windowTo` yet AND advanced since the point
-   * already persisted before this call, meaning more invoices are likely
-   * still available in this window. KSeF's incremental workflow doesn't expose
-   * an exact "isTruncated" flag through this aggregate result, so this compares
-   * the point's instant against the exclusive end of the window -- always safe
-   * to act on (calling sync again just resumes from the saved continuation
-   * point), but can over-report on the window's final day. The progress check
-   * exists because KSeF's own high-water mark can stall short of windowTo with
-   * no new data forthcoming; without it, a stalled mark inside a past windowTo
-   * would report hasMore forever.
+   * Driven directly by KSeF's own `isTruncated` signal on the fetched package
+   * (`FetchPurchaseInvoicesResult.isTruncated`), not reconstructed from a bare
+   * timestamp (design/KSEF_PAGINATION_AND_HASMORE.md documents why the old
+   * timestamp heuristic over-reported in production, burning export-init
+   * quota on empty pages).
+   *
+   * - `isTruncated === true` -- KSeF is telling us directly there is more data
+   *   in this window right now, so `hasMore` is true unless the resulting
+   *   continuation point has already reached/passed the effective window end
+   *   (`min(windowTo's exclusive end, now())`), in which case that data lies
+   *   outside the requested window and there is nothing more for *this* call.
+   * - `isTruncated === false` -- the page covers everything available right
+   *   now. `hasMore` is always false, but which of `hasMoreReason`'s two
+   *   remaining values applies depends on whether the continuation point
+   *   reached the effective window end (genuinely done: `"window_exhausted"`)
+   *   or not (KSeF's own high-water mark just hasn't scanned that far yet,
+   *   typically because `windowTo` is today or later: `"stalled"`).
+   * - `isTruncated === undefined` -- the signal genuinely wasn't populated
+   *   (an older test fake, or a package with no data at all). Fails closed:
+   *   `hasMore` is false and `hasMoreReason` is `null`. Never guess `true`
+   *   when the signal is missing -- a caller that still needs another page
+   *   gets it on the next sync once the signal is present; defaulting to
+   *   `false` can at worst cost a one-call delay, never a wasted export-init
+   *   call.
    */
   hasMore: boolean;
+  /** See `hasMore`'s JSDoc. `null` only when `isTruncated` was undefined. */
+  hasMoreReason: HasMoreReason | null;
 }
 
 export interface SyncDiagnostics {
@@ -84,6 +114,15 @@ export interface SyncDiagnostics {
    */
   itemsFailedCount: number;
   maxIterations: number;
+  /**
+   * KSeF's raw `isTruncated` signal for the fetched package, before the
+   * window-end bound is applied. Kept alongside `hasMoreReason` (not implied
+   * by it) because the one case they diverge in is exactly the one worth
+   * being able to tell apart later: `isTruncated: true` with the window
+   * already exhausted still yields `hasMoreReason: "window_exhausted"`. Null
+   * when the signal genuinely wasn't populated (see `hasMore`'s JSDoc).
+   */
+  isTruncated: boolean | null;
 }
 
 /**
@@ -250,6 +289,7 @@ export async function syncPurchaseInvoices(
     const row = await insertKsefInvoiceIfNotExists(db, {
       ...invoice,
       direction,
+      syncRunId: options.syncRunId ?? null,
       // Sales invoices bypass categorization entirely (design/SALES_INVOICES_PLAN.md
       // §4.2): without this, every one would land in the owner's review queue.
       ...(direction === "sales" ? { categorizationConfidence: "not_applicable" as const } : {}),
@@ -364,18 +404,37 @@ export async function syncPurchaseInvoices(
   // its own high-water mark advances to roughly "now" instead -- comparing
   // only against windowTo would then report hasMore forever, since "now" keeps
   // creeping forward on every poll but never reaches a windowTo that hasn't
-  // happened yet. Capping the comparison at "now" too means hasMore correctly
-  // means "more to fetch right now", not "more once windowTo actually arrives".
+  // happened yet. Capping the comparison at "now" too means "reached the
+  // window end" correctly means "covered everything requestable right now",
+  // not "covered everything once windowTo actually arrives".
   const effectiveWindowEndMs = Math.min(windowEndExclusiveMs, now());
-  // KSeF's high-water mark can also stall short of the window end with a
-  // windowTo well in the past -- if it hasn't moved since the point already
-  // persisted before this call, there is nothing this engine can do to make it
-  // move, so "still short of windowTo" alone would report hasMore forever.
-  const madeProgress =
-    storedContinuationMs === null ||
-    (newContinuationMs !== null && newContinuationMs > storedContinuationMs);
-  const hasMore =
-    newContinuationMs !== null && newContinuationMs < effectiveWindowEndMs && madeProgress;
+  // Whether the continuation point KSeF just returned has already covered the
+  // requested window. `newContinuationMs === null` (no point returned at all)
+  // can't be proven to have reached anything, so it reads as "not reached".
+  const reachedEffectiveWindowEnd =
+    newContinuationMs !== null && newContinuationMs >= effectiveWindowEndMs;
+  // design/KSEF_PAGINATION_AND_HASMORE.md §7.2: drive hasMore off KSeF's own
+  // isTruncated signal instead of reconstructing intent from a bare timestamp
+  // (the old madeProgress/effectiveWindowEndMs-only heuristic this replaces
+  // was defeated in production by ordinary round-trip clock drift -- see the
+  // design doc's §2.3/§3 for the empirical measurements). The AND against
+  // effectiveWindowEndMs when isTruncated is true is mathematically redundant
+  // per hwmCoordinator.ts's updateContinuationPoint (a truncated result's
+  // continuation point is pinned to lastPermanentStorageDate, the date of the
+  // last invoice actually included in a package built for this window, which
+  // can never exceed that window's end) but is kept anyway as cheap defensive
+  // insurance against that invariant ever changing upstream.
+  const hasMore = fetchResult.isTruncated === true && !reachedEffectiveWindowEnd;
+  const hasMoreReason: HasMoreReason | null =
+    fetchResult.isTruncated === undefined
+      ? null
+      : fetchResult.isTruncated
+        ? hasMore
+          ? "truncated"
+          : "window_exhausted"
+        : reachedEffectiveWindowEnd
+          ? "window_exhausted"
+          : "stalled";
   const needsReviewCount = invoices.filter(
     (invoice) => invoice.categorizationConfidence === "needs_review",
   ).length;
@@ -390,12 +449,14 @@ export async function syncPurchaseInvoices(
     itemsInsertedCount,
     itemsFailedCount,
     maxIterations,
+    isTruncated: fetchResult.isTruncated ?? null,
   };
   logger.info("sync.persist.completed", {
     durationMs: persistDurationMs,
     ...diagnostics,
     hasMore,
+    hasMoreReason,
   });
 
-  return { invoices, hasMore, diagnostics };
+  return { invoices, hasMore, hasMoreReason, diagnostics };
 }

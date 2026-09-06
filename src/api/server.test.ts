@@ -45,6 +45,7 @@ const EMPTY_DIAGNOSTICS: SyncPurchaseInvoicesResult["diagnostics"] = {
   itemsInsertedCount: 0,
   itemsFailedCount: 0,
   maxIterations: 1,
+  isTruncated: null,
 };
 
 describe("API server", () => {
@@ -65,6 +66,7 @@ describe("API server", () => {
       async (): Promise<SyncPurchaseInvoicesResult> => ({
         invoices: [],
         hasMore: false,
+        hasMoreReason: null,
         diagnostics: EMPTY_DIAGNOSTICS,
       }),
     );
@@ -530,7 +532,12 @@ describe("API server", () => {
         args[3]?.logger?.info("sync.fetch.completed", { fetchedCount: 0 });
         args[3]?.logger?.info("sync.persist.started", { fetchedCount: 0 });
         args[3]?.logger?.info("sync.persist.completed", { insertedCount: 0 });
-        return { invoices: [], hasMore: false, diagnostics: EMPTY_DIAGNOSTICS };
+        return {
+          invoices: [],
+          hasMore: false,
+          hasMoreReason: null,
+          diagnostics: EMPTY_DIAGNOSTICS,
+        };
       });
       const observableServer = buildServer({
         db,
@@ -611,6 +618,7 @@ describe("API server", () => {
           windowFrom: "2025-01-01",
           windowTo: "2025-01-31",
           direction: "purchase",
+          syncRunId: 1,
         },
         { logger: { info: expect.any(Function), warn: expect.any(Function) } },
       );
@@ -653,7 +661,7 @@ describe("API server", () => {
       expect(sync).toHaveBeenCalledWith(
         db,
         { workflows: {} },
-        { windowFrom: "2025-01-01", windowTo: "2025-01-31", direction: "sales" },
+        { windowFrom: "2025-01-01", windowTo: "2025-01-31", direction: "sales", syncRunId: 1 },
         { logger: { info: expect.any(Function), warn: expect.any(Function) } },
       );
 

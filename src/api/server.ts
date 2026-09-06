@@ -207,7 +207,7 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
       const result = await sync(
         deps.db,
         client,
-        { ...window, direction },
+        { ...window, direction, syncRunId: run.id },
         {
           logger: { info, warn },
         },
@@ -227,6 +227,8 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
         itemsInsertedCount: result.diagnostics.itemsInsertedCount,
         itemsFailedCount: result.diagnostics.itemsFailedCount,
         hasMore: result.hasMore,
+        isTruncated: result.diagnostics.isTruncated,
+        hasMoreReason: result.hasMoreReason,
       });
       info("sync.completed", {
         durationMs,

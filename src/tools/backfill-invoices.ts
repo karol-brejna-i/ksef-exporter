@@ -39,6 +39,7 @@
  * `windowFrom` (design/SYNC_CONTINUATION_POINT_ANALYSIS.md §3.1) and skip the
  * historical range this script exists to fetch.
  */
+import { fileURLToPath } from "node:url";
 import type { KsefClient } from "ksef-client";
 import "../config/bootstrap-env.js";
 import { loadConfig } from "../config/env.js";
@@ -52,11 +53,45 @@ import { classifyKsefError, formatKsefError } from "../ksef/rate-limit.js";
 import { SUBJECT_TYPE_BY_DIRECTION, syncPurchaseInvoices } from "../sync.js";
 
 const MAX_CALLS = Number(process.env.BACKFILL_MAX_CALLS ?? 15);
+/**
+ * Circuit breaker (design/KSEF_PAGINATION_AND_HASMORE.md §7.3): stop after
+ * this many consecutive calls that fetched zero invoices, regardless of what
+ * `hasMore` reports. Defense in depth for the exact live incident that doc
+ * traces -- `hasMore` staying true on empty pages -- so a future regression
+ * in the `isTruncated` plumbing (§7.1/§7.2) can't reproduce it here even if
+ * `hasMore` itself is wrong again.
+ *
+ * N=3: large enough that one legitimately sparse period in real invoice data
+ * (e.g. a slow week with a single empty page before more arrives) doesn't
+ * false-trip the breaker, small enough to decisively stop the zero-fetch-
+ * forever pattern from the incident (§3 of that doc: 4-5 consecutive empty
+ * calls observed per tenant before the run was stopped by hand) well before
+ * burning meaningful export-init quota.
+ */
+const MAX_CONSECUTIVE_EMPTY = Number(process.env.BACKFILL_MAX_CONSECUTIVE_EMPTY ?? 3);
 const DELAY_BETWEEN_CALLS_MS = 3_000;
 const ALL_DIRECTIONS: InvoiceDirection[] = ["purchase", "sales"];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Injectable seam for `backfillDirection` (mirrors `src/api/server.ts`'s
+ * `BuildServerDeps` convention: `deps.sync ?? syncPurchaseInvoices`), so a
+ * test can drive the call loop with a fake `syncPurchaseInvoices` and a fake
+ * delay without waiting on real timers or KSeF network calls. All fields
+ * default to the real implementation / env-configured constant.
+ */
+export interface BackfillDirectionDeps {
+  /** Injectable for tests; defaults to the real `syncPurchaseInvoices`. */
+  sync?: typeof syncPurchaseInvoices;
+  /** Injectable for tests; defaults to a real `setTimeout`-based delay. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Overridable per-direction call cap; defaults to `MAX_CALLS` (env `BACKFILL_MAX_CALLS`). */
+  maxCalls?: number;
+  /** Overridable consecutive-empty-fetch circuit breaker; defaults to `MAX_CONSECUTIVE_EMPTY` (env `BACKFILL_MAX_CONSECUTIVE_EMPTY`). */
+  maxConsecutiveEmpty?: number;
 }
 
 function resolveDirections(): InvoiceDirection[] {
@@ -71,16 +106,23 @@ function resolveDirections(): InvoiceDirection[] {
  * direction: its own continuation point, its own export-init quota, its own
  * safety cap -- so running this for "purchase" then "sales" in the same
  * process is exactly as safe as two separate invocations. Returns false only
- * on a KSeF error; a spent safety cap is a warning, not a failure, since
- * rerunning the script always resumes from the persisted continuation point.
+ * on a KSeF error; a spent safety cap (`MAX_CALLS`) or a tripped
+ * consecutive-empty circuit breaker (`MAX_CONSECUTIVE_EMPTY`) is a warning,
+ * not a failure, since rerunning the script always resumes from the
+ * persisted continuation point.
  */
-async function backfillDirection(
+export async function backfillDirection(
   db: Db,
   client: KsefClient,
   direction: InvoiceDirection,
   windowFrom: string,
   windowTo: string,
+  deps: BackfillDirectionDeps = {},
 ): Promise<boolean> {
+  const sync = deps.sync ?? syncPurchaseInvoices;
+  const delay = deps.sleep ?? sleep;
+  const maxCalls = deps.maxCalls ?? MAX_CALLS;
+  const maxConsecutiveEmpty = deps.maxConsecutiveEmpty ?? MAX_CONSECUTIVE_EMPTY;
   const subjectType = SUBJECT_TYPE_BY_DIRECTION[direction];
 
   if (process.env.BACKFILL_RESET_CONTINUATION === "true") {
@@ -89,7 +131,8 @@ async function backfillDirection(
   }
 
   let totalInvoices = 0;
-  for (let call = 1; call <= MAX_CALLS; call++) {
+  let consecutiveEmptyFetches = 0;
+  for (let call = 1; call <= maxCalls; call++) {
     const startedAtMs = Date.now();
     const continuationBefore = await getContinuationPoint(db, subjectType);
     const run = await createSyncRun(db, {
@@ -105,10 +148,10 @@ async function backfillDirection(
     );
 
     try {
-      const result = await syncPurchaseInvoices(
+      const result = await sync(
         db,
         client,
-        { windowFrom, windowTo, direction },
+        { windowFrom, windowTo, direction, syncRunId: run.id },
         { logger: { info: () => {}, warn: (event, meta) => console.warn(event, meta) } },
       );
       const completedAtMs = Date.now();
@@ -125,16 +168,33 @@ async function backfillDirection(
         itemsInsertedCount: result.diagnostics.itemsInsertedCount,
         itemsFailedCount: result.diagnostics.itemsFailedCount,
         hasMore: result.hasMore,
+        isTruncated: result.diagnostics.isTruncated,
+        hasMoreReason: result.hasMoreReason,
       });
       totalInvoices += result.invoices.length;
       console.log(
         `[${direction} call ${call}] fetched=${result.diagnostics.fetchedCount} inserted=${result.diagnostics.insertedCount} ` +
-          `duplicate=${result.diagnostics.duplicateCount} hasMore=${result.hasMore}`,
+          `duplicate=${result.diagnostics.duplicateCount} hasMore=${result.hasMore} hasMoreReason=${result.hasMoreReason ?? "unknown"}`,
       );
+
+      if (result.diagnostics.fetchedCount === 0) {
+        consecutiveEmptyFetches++;
+      } else {
+        consecutiveEmptyFetches = 0;
+      }
 
       if (!result.hasMore) {
         console.log(
           `\nDone. ${totalInvoices} ${direction} invoice(s) inserted across ${call} call(s).`,
+        );
+        return true;
+      }
+
+      if (consecutiveEmptyFetches >= maxConsecutiveEmpty) {
+        console.warn(
+          `\nStopped ${direction} after ${consecutiveEmptyFetches} consecutive calls that fetched zero ` +
+            `invoices (circuit breaker, BACKFILL_MAX_CONSECUTIVE_EMPTY=${maxConsecutiveEmpty}) even though ` +
+            `hasMore was still true -- rerun to resume from the persisted continuation point.`,
         );
         return true;
       }
@@ -154,11 +214,11 @@ async function backfillDirection(
       return false;
     }
 
-    await sleep(DELAY_BETWEEN_CALLS_MS);
+    await delay(DELAY_BETWEEN_CALLS_MS);
   }
 
   console.warn(
-    `\nStopped ${direction} after the ${MAX_CALLS}-call safety cap with more data still available.`,
+    `\nStopped ${direction} after the ${maxCalls}-call safety cap with more data still available.`,
   );
   return true;
 }
@@ -192,7 +252,14 @@ async function main() {
   if (!allOk) process.exitCode = 1;
 }
 
-main().catch((error) => {
-  console.error("Invoice backfill failed:", formatKsefError(error));
-  process.exitCode = 1;
-});
+// Guards the real KSeF-calling entry point so importing this module (e.g.
+// from `src/tools/backfill-invoices.test.ts`, importing `backfillDirection`
+// for the injectable-seam tests below) never runs `main()` as a side effect.
+const isMainModule =
+  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+if (isMainModule) {
+  main().catch((error) => {
+    console.error("Invoice backfill failed:", formatKsefError(error));
+    process.exitCode = 1;
+  });
+}
