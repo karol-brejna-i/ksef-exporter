@@ -1,28 +1,31 @@
 /**
  * Exports invoices (and their line items) to an .xlsx workbook with two
- * sheets, "Faktury" and "Pozycje". Replaces the old scripts/export-invoices.py
- * (Python + openpyxl), which had drifted from the schema (missing direction,
- * invoice_kind, items_extracted_at, and never touched invoice_items at all).
+ * sheets, "Faktury" and "Pozycje".
  *
  * Usage:
- *   pnpm run export:invoices                                    # all invoices -> data/invoices-export.xlsx
- *   pnpm run export:invoices -- --db path/to/custom.sqlite
- *   pnpm run export:invoices -- --from 2026-05-01                # from May 1st onward
- *   pnpm run export:invoices -- --to 2026-06-30                  # up to June 30th
- *   pnpm run export:invoices -- --from 2026-05-01 --to 2026-06-30 ~/Desktop/maj-czerwiec.xlsx
+ *   pnpm run export:invoices                                     # all invoices -> data/invoices-export.xlsx
+ *   APP_ENV=parkowa pnpm run export:invoices                      # resolves DATABASE_PATH from .env.parkowa
+ *   pnpm run export:invoices -- path/to/custom.sqlite
+ *   pnpm run export:invoices -- --from 2026-05-01                 # from May 1st onward
+ *   pnpm run export:invoices -- --to 2026-06-30                   # up to June 30th
+ *   pnpm run export:invoices -- --from 2026-05-01 --to 2026-06-30 --out ~/Desktop/maj-czerwiec.xlsx
  *
- * Unlike every other src/tools/*.ts script (where the first positional
- * argument is the database path), the positional argument here is the
- * *output* path and the database is an explicit `--db` flag -- this
- * mirrors the old Python script's own CLI shape and is intentional, not an
- * oversight to "fix" back to the sibling convention.
+ * The database is the first non-flag argument, else $DATABASE_PATH (itself
+ * resolved from `.env`/`.env.<APP_ENV>` by the bootstrap-env import below),
+ * else the same default the app uses -- the same convention every other
+ * src/tools/*.ts script follows. Makes zero KSeF calls: it reads
+ * invoices/invoice_items only, so it needs no KSeF or auth credentials, and
+ * deliberately does not go through the full `loadConfig()` that those would
+ * require.
  *
  * Every run prints the resolved parameters before exporting, and validates
- * `--db` up front (existence, file, valid SQLite, has an `invoices` table)
- * so a typo'd path fails with a clear message instead of silently creating
- * a fresh empty database (which is what `createDb` would otherwise do for a
- * nonexistent path).
+ * the database path up front (existence, file, valid SQLite, has an
+ * `invoices` table) so a typo'd path fails with a clear message instead of
+ * letting a raw error surface -- or, worse, silently creating a fresh empty
+ * database (which is what `createDb` would otherwise do for a nonexistent
+ * path).
  */
+import "../config/bootstrap-env.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createDb } from "../db/client.js";
@@ -51,33 +54,33 @@ function parseArgs(argv: string[]): ParsedArgs {
   // this script's argv on some pnpm/tsx versions -- skip it if present.
   const args = argv.filter((arg) => arg !== "--");
 
-  let dbPath = process.env.DATABASE_PATH ?? DEFAULT_DATABASE_PATH;
+  let positionalDbPath: string | undefined;
   let from: string | undefined;
   let to: string | undefined;
-  let output: string | undefined;
+  let output = DEFAULT_OUTPUT_PATH;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--db") {
+    if (arg === "--out") {
       const value = args[++i];
       if (value === undefined) {
         return {
-          dbPath,
+          dbPath: positionalDbPath ?? DEFAULT_DATABASE_PATH,
           from,
           to,
-          output: output ?? DEFAULT_OUTPUT_PATH,
-          error: "--db requires a value",
+          output,
+          error: "--out requires a value",
         };
       }
-      dbPath = value;
+      output = value;
     } else if (arg === "--from") {
       const value = args[++i];
       if (value === undefined) {
         return {
-          dbPath,
+          dbPath: positionalDbPath ?? DEFAULT_DATABASE_PATH,
           from,
           to,
-          output: output ?? DEFAULT_OUTPUT_PATH,
+          output,
           error: "--from requires a value",
         };
       }
@@ -86,56 +89,46 @@ function parseArgs(argv: string[]): ParsedArgs {
       const value = args[++i];
       if (value === undefined) {
         return {
-          dbPath,
+          dbPath: positionalDbPath ?? DEFAULT_DATABASE_PATH,
           from,
           to,
-          output: output ?? DEFAULT_OUTPUT_PATH,
+          output,
           error: "--to requires a value",
         };
       }
       to = value;
     } else if (arg?.startsWith("--")) {
       return {
-        dbPath,
+        dbPath: positionalDbPath ?? DEFAULT_DATABASE_PATH,
         from,
         to,
-        output: output ?? DEFAULT_OUTPUT_PATH,
+        output,
         error: `Unknown flag: ${arg}`,
       };
     } else if (arg !== undefined) {
-      output = arg;
+      positionalDbPath = arg;
     }
   }
+
+  const dbPath = positionalDbPath ?? process.env.DATABASE_PATH ?? DEFAULT_DATABASE_PATH;
 
   if (from !== undefined && !isIsoDate(from)) {
     return {
       dbPath,
       from,
       to,
-      output: output ?? DEFAULT_OUTPUT_PATH,
+      output,
       error: "--from must be a valid date formatted as YYYY-MM-DD",
     };
   }
   if (to !== undefined && !isIsoDate(to)) {
-    return {
-      dbPath,
-      from,
-      to,
-      output: output ?? DEFAULT_OUTPUT_PATH,
-      error: "--to must be a valid date formatted as YYYY-MM-DD",
-    };
+    return { dbPath, from, to, output, error: "--to must be a valid date formatted as YYYY-MM-DD" };
   }
   if (from !== undefined && to !== undefined && from > to) {
-    return {
-      dbPath,
-      from,
-      to,
-      output: output ?? DEFAULT_OUTPUT_PATH,
-      error: "--from must not be after --to",
-    };
+    return { dbPath, from, to, output, error: "--from must not be after --to" };
   }
 
-  return { dbPath, from, to, output: output ?? DEFAULT_OUTPUT_PATH, error: undefined };
+  return { dbPath, from, to, output, error: undefined };
 }
 
 async function main() {
@@ -144,7 +137,7 @@ async function main() {
   if (error) {
     console.error(`Error: ${error}`);
     console.error(
-      "Usage: pnpm run export:invoices -- [--db PATH] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [output.xlsx]",
+      "Usage: pnpm run export:invoices -- [database-path] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--out output.xlsx]",
     );
     process.exitCode = 1;
     return;

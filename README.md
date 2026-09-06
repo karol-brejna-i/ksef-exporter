@@ -1,6 +1,6 @@
 # KSeF Exporter
 
-**Last updated:** 2026-09-03 19:19 CEST
+**Last updated:** 2026-09-06 13:58 CEST
 
 Self-hosted app that pulls purchase invoices from KSeF, categorizes them, and supports manual
 correction. See [`design/SPEC.md`](./design/SPEC.md) for the business context and
@@ -199,7 +199,8 @@ list:
   environment.
 - `pnpm run dump:invoices` — dumps raw KSeF invoice data to the gitignored `data/` folder.
 - `pnpm run export:invoices` — exports invoices and their line items to a two-sheet `.xlsx`
-  workbook (`data/invoices-export.xlsx` by default). Supports `--db`, `--from`/`--to`
-  (issue-date range), and a positional output path. Makes no KSeF calls; reads only from the
-  local SQLite database. See [`scripts/README.md`](./scripts/README.md) for full usage.
+  workbook (`data/invoices-export.xlsx` by default). Takes a positional database path (or
+  `APP_ENV`/`DATABASE_PATH`, like `dev:api`), `--from`/`--to` (issue-date range), and `--out`.
+  Makes no KSeF calls; reads only from the local SQLite database. See
+  [`excel-export-script.readme.md`](./docs/excel-export-script.readme.md) for full usage.
 - `pnpm run migrate` / `pnpm run db:generate` — Drizzle migrations.
