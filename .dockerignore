@@ -1,0 +1,33 @@
+# Build context for deploy/docker/Dockerfile is the repo root. This file is
+# the primary guarantee that no secret and no real invoice data ever enters
+# an image layer, on top of the Dockerfile only COPYing explicit paths
+# (never `COPY . .`). See design/DOCKER_DEPLOYMENT_PLAN.md §5/§12.
+#
+# Keep in sync with what the Dockerfile actually COPYs: package.json,
+# pnpm-lock.yaml, pnpm-workspace.yaml, web/package.json, tsconfig.json, src/,
+# drizzle/, web/ (sources) must all remain reachable — do not broaden a
+# pattern below to the point it swallows one of those.
+
+node_modules
+**/node_modules
+dist
+web/dist
+
+data/
+.env*
+*.env
+
+.git
+.venv
+.pnpm-store
+.secrets
+.cognitron
+
+design
+docs
+scratch
+coverage
+
+*.log
+*.xlsx
+.DS_Store

@@ -13,3 +13,5 @@ coverage/
 chat.json
 scratch/
 .env.*
+# *.env above would also swallow the committed deploy/env/*.stack.env files; un-ignore just those.
+!deploy/env/*.stack.env

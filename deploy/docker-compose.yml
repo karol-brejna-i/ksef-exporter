@@ -1,0 +1,66 @@
+# Single parameterised stack definition, instantiated once per tenant via
+# `deploy/ksef-stack.sh <tenant> ...`, which supplies `deploy/env/<tenant>.stack.env`
+# as the Compose `--env-file` (non-secret, committed) and `TENANT` (from that same
+# file) selects `env/${TENANT}.secrets.env` (git-ignored) below. See
+# design/DOCKER_DEPLOYMENT_PLAN.md §6 for the design this implements.
+#
+# Deliberately one file, no base/overlay split and no `include:` — Compose's
+# list-merge semantics for `ports`/`volumes` across multiple files are a known
+# footgun, and per-tenant identity is namespaced entirely via COMPOSE_PROJECT_NAME
+# (set in the stack env file), not via separate compose files.
+#
+# This file lives in `deploy/`, so `build.context: ..` is the repo root and
+# `env_file`/volume bind paths are resolved relative to this file's directory.
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: api
+      args:
+        GIT_SHA: "${GIT_SHA:-unknown}"
+    env_file:
+      - env/${TENANT}.secrets.env
+    environment:
+      DATABASE_PATH: /data/ksef-exporter.sqlite
+      PORT: "3000"
+      NODE_ENV: production
+      WEB_ORIGIN: "${WEB_ORIGIN}"
+      KSEF_ENVIRONMENT: "${KSEF_ENVIRONMENT}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      TZ: "${TZ:-Europe/Warsaw}"
+    volumes:
+      - data:/data
+      - "${BACKUP_DIR}:/backups"
+    # No published ports: the API is reachable only from the `web` sidecar over
+    # the compose network. Publishing it would also bypass ufw (§3, §12.2).
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: web
+    environment:
+      API_UPSTREAM: http://api:3000
+    ports:
+      - "${WEB_BIND}:${WEB_PORT}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # Named per project via COMPOSE_PROJECT_NAME (e.g. `ksef-parkowa_data`).
+  data:
