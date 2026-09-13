@@ -26,6 +26,7 @@
     "backfill:invoice-kind": "tsx src/tools/backfill-invoice-kind.ts",
     "backfill:invoice-totals": "tsx src/tools/backfill-invoice-totals.ts",
     "backfill:invoices": "tsx src/tools/backfill-invoices.ts",
+    "backup:db": "tsx src/tools/backup-db.ts",
     "dev:api": "tsx watch src/api/main.ts",
     "start:api": "tsx src/api/main.ts",
     "dev:web": "pnpm --dir web run dev",
