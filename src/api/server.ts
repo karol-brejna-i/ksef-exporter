@@ -1,6 +1,7 @@
 import type { Writable } from "node:stream";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
+import { sql } from "drizzle-orm";
 import Fastify, {
   type FastifyError,
   type FastifyInstance,
@@ -156,6 +157,23 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
     fastify.log.error(error);
     const statusCode = error.statusCode ?? 500;
     reply.code(statusCode).send({ error: statusCode < 500 ? error.message : "internal error" });
+  });
+
+  // Unauthenticated by design: the container HEALTHCHECK, compose's
+  // `depends_on: condition: service_healthy`, and the post-deploy smoke
+  // script all call this before -- or without ever having -- a JWT. A
+  // trivial `select 1` proves the process can actually read its database,
+  // not just that the HTTP listener is up; failure reports nothing beyond
+  // the generic error shape already used by setErrorHandler above, since
+  // this endpoint is reachable by anyone who can reach the container.
+  fastify.get("/health", async (_request, reply) => {
+    try {
+      deps.db.get(sql`select 1`);
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(503).send({ error: "internal error" });
+    }
+    return { status: "ok" };
   });
 
   fastify.post("/auth/login", async (request, reply) => {

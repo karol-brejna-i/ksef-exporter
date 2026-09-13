@@ -86,6 +86,29 @@ describe("API server", () => {
     return (response.json() as { token: string }).token;
   }
 
+  describe("GET /health", () => {
+    it("returns 200 and status ok with no Authorization header", async () => {
+      const response = await fastify.inject({ method: "GET", url: "/health" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ status: "ok" });
+    });
+
+    it("returns 503 without leaking details when the database is unreachable", async () => {
+      const brokenDb = {
+        get: () => {
+          throw new Error("database is not open");
+        },
+      } as unknown as Db;
+      const brokenServer = buildServer({ db: brokenDb, config, getClient, sync });
+
+      const response = await brokenServer.inject({ method: "GET", url: "/health" });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toEqual({ error: "internal error" });
+    });
+  });
+
   describe("POST /auth/login", () => {
     it("returns a JWT for valid credentials", async () => {
       const response = await fastify.inject({
