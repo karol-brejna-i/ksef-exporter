@@ -319,7 +319,7 @@ Notes that only show up in real data:
 | Line-item workstream                            | [design/INVOICE_ITEMS_PLAN.md](design/INVOICE_ITEMS_PLAN.md)                                                                                                                     |
 | Invoice direction / sales ingestion             | [design/SALES_INVOICES_PLAN.md](design/SALES_INVOICES_PLAN.md)                                                                                                                   |
 | Column types, migrations, temporal values       | [design/SCHEMA_TYPES_PLAN.md](design/SCHEMA_TYPES_PLAN.md)                                                                                                                       |
-| Continuation-point failure post-mortems         | [design/SYNC_CONTINUATION_POINT_ANALYSIS.md](design/SYNC_CONTINUATION_POINT_ANALYSIS.md), [design/SYNC_CONTINUATION_STRIKES_AGAIN.md](design/SYNC_CONTINUATION_STRIKES_AGAIN.md) |
+| Continuation-point failure post-mortems         | [design/SYNC_CONTINUATION_POINT_ANALYSIS.md](design/SYNC_CONTINUATION_POINT_ANALYSIS.md) |
 | Invoice type findings from real data            | [design/INVOICE_TYPES_ANALYSIS.md](design/INVOICE_TYPES_ANALYSIS.md)                                                                                                             |
 
 Manual probes (require real credentials, hit the live API — use deliberately):

@@ -11,7 +11,7 @@ Here is typical call:
 ```
 BACKFILL_DIRECTION=purchase \
 BACKFILL_WINDOW_FROM=2026-08-01 \
-BACKFILL_WINDOW_TO=2026-08-31 \
+BACKFILL_WINDOW_TO=2026-09-07 \
 BACKFILL_RESET_CONTINUATION=true \
 APP_ENV=parkowa pnpm run backfill:sales
 ```
@@ -22,10 +22,9 @@ APP_ENV=parkowa pnpm run backfill:sales
 
 
 ```bash
-BACKFILL_WINDOW_FROM=2026-08-01 BACKFILL_WINDOW_TO=2026-08-31 BACKFILL_RESET_CONTINUATION=true APP_ENV=parkowa pnpm run backfill:invoices
-BACKFILL_WINDOW_FROM=2026-08-01 BACKFILL_WINDOW_TO=2026-08-31 BACKFILL_RESET_CONTINUATION=true APP_ENV=parkowa pnpm run backfill:invoices
-BACKFILL_WINDOW_FROM=2026-08-01 BACKFILL_WINDOW_TO=2026-08-31 BACKFILL_RESET_CONTINUATION=true APP_ENV=portowa pnpm run backfill:invoices
-BACKFILL_WINDOW_FROM=2026-08-01 BACKFILL_WINDOW_TO=2026-08-31 BACKFILL_RESET_CONTINUATION=true APP_ENV=portowa pnpm run backfill:invoices  
+BACKFILL_WINDOW_FROM=2026-08-01 BACKFILL_WINDOW_TO=2026-09-07 BACKFILL_RESET_CONTINUATION=true APP_ENV=parkowa pnpm run backfill:invoices
+BACKFILL_WINDOW_FROM=2026-08-01 BACKFILL_WINDOW_TO=2026-09-07 BACKFILL_RESET_CONTINUATION=true APP_ENV=portowa pnpm run backfill:invoices
+
 ```
     > Remember to change the dates.
 
@@ -47,10 +46,21 @@ API:
 ```
 APP_ENV=parkowa pnpm run dev:api 2>&1 | tee api.log
 ```
+or
+```
+APP_ENV=portowa pnpm run dev:api 2>&1 | tee api.log
+```
+
 
 Web:
 ```
 APP_ENV=parkowa pnpm run dev:web
 ```
 
+```
+APP_ENV=portowa pnpm run dev:web
+```
 
+
+
+@tod: brakuje opisu. eksportu do excel'a.

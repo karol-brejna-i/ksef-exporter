@@ -12,8 +12,7 @@ model: sonnet
 
 You review one diff touching `src/sync.ts` (or KSeF export/client calls)
 against exactly these documented facts — read `CLAUDE.md` and
-`design/SYNC_CONTINUATION_POINT_ANALYSIS.md` /
-`design/SYNC_CONTINUATION_STRIKES_AGAIN.md` first for full context:
+`design/SYNC_CONTINUATION_POINT_ANALYSIS.md` first for full context:
 
 1. `POST /invoices/exports` (start export) is rate-limited to **8 req/s,
    16/min, 20/h** per (NIP + IP) — the tightest limit in the whole KSeF API.
