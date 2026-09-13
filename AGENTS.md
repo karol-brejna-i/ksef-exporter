@@ -6,6 +6,10 @@ delegating work that doesn't belong in the main context. Agents live under
 `model` frontmatter. None of them run automatically — every one is dispatched on demand
 by the primary agent (you), never scheduled or triggered by a hook.
 
+No agent below owns `deploy/` or Docker deployment work; for that context, read
+`design/DEPLOYMENT_CONTEXT.md` (or `design/DOCKER_DEPLOYMENT_PLAN.md` if that doesn't
+exist yet) instead.
+
 ## Index
 
 | Agent                      | Model  | Reach for it when                                                                                                                                                                                                                                                                                                                                 |

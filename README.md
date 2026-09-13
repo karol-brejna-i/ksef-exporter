@@ -180,6 +180,9 @@ The production web bundle is a set of static files (`web/dist/`) — serve them 
 file host, configured to talk to the API's real URL (adjust CORS/`WEB_ORIGIN` accordingly, since
 there's no dev-server proxy in production).
 
+For running this app as per-tenant Docker Compose stacks instead, see
+[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
+
 ## Tests, lint, typecheck
 
 Run from the relevant package directory (repo root for the API, `web/` for the UI):
