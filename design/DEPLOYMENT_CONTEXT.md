@@ -9,10 +9,12 @@ anything under `deploy/`, the `Dockerfile`, the compose stack, or the operationa
 `docs/DEPLOYMENT.md` is the human operator guide. Where any of the three disagrees with the
 code, the code wins — and fix the document.
 
-**Status as of 2026-09-13:** both tenant stacks are implemented, committed, and **running on
-`linuc`**, verified there with real credentials. They are reachable only over the LAN: the
-`durga` edge has not been touched, so there is no public hostname or TLS yet, and the
-databases are still empty. See §11 for exactly what is and is not done.
+**Status as of 2026-09-13:** both tenant stacks are implemented, committed, **running on
+`linuc`, and seeded with real tenant data** — the `linuc` instance is now the authoritative
+one and the developer-machine instance should no longer be used for real work. Access is
+LAN-only: the `durga` edge has deliberately not been touched, and exposing the app publicly is
+blocked on stronger authentication being implemented first. See §11 for exactly what is and is
+not done.
 
 ## 1. What is being deployed
 
@@ -368,15 +370,38 @@ Also confirmed on the host: ports 8081/8082 were free, `api` publishes nothing w
 binds only `192.168.0.102:<port>`, and the tenant volumes `ksef-parkowa_data` /
 `ksef-portowa_data` were created cleanly.
 
+**Seeded with real data on 2026-09-13**, following the §8 procedure, and `linuc` is now the
+authoritative instance. Verified after restore, per tenant, against the source databases:
+
+| Tenant | invoices | invoice_items | sync_runs | sync_state |
+| ------ | -------- | ------------- | --------- | ---------- |
+| `parkowa` | 493 | 4 534 | 54 | 2 rows, continuation points intact |
+| `portowa` | 655 | 6 557 | 36 | 2 rows, continuation points intact |
+
+Row counts are identical to the source across every table, the `sync_state` rows hash
+byte-identically to the source (so the next sync resumes instead of refetching into a
+rate-limited endpoint), no migration was applied on boot, and the API serves the real data
+through the sidecar. Pre-cutover snapshots are retained as `seed-<tenant>.sqlite` in each
+tenant's backup directory; they deliberately do **not** match the
+`ksef-exporter-<stamp>.sqlite` pattern, so `backup.sh`'s retention will never prune them.
+
+Note for anyone re-running the seeding procedure: `backup-db.ts` opens the source read-write
+(it must, to run `VACUUM INTO`), so closing it **checkpoints a non-empty WAL into the main
+database file**, changing that file's mtime. That is a safe consolidation, not a write of new
+data — verified with `integrity_check` and `foreign_key_check` plus unchanged row counts — but
+do not be alarmed by the mtime, and do not run it against a database another process is
+writing.
+
 Not done:
 
-- **`durga` is untouched.** No DNS records, no vhost installed, no certificate issued, so the
-  app is **not reachable from the internet yet** — only from the LAN at
-  `http://192.168.0.102:8081` / `:8082`. `deploy/nginx/ksef-tenant.conf.template` is committed
-  source only.
-- **Volumes have never been seeded** with real tenant data — both databases are empty (schema
-  migrated and categorization rules seeded, zero invoices). §8 has the seeding procedure.
-- No cron entry for `backup.sh` is installed yet.
+- **`durga` is untouched, deliberately.** No DNS records, no vhost installed, no certificate
+  issued, so the app is **not reachable from the internet** — only from the LAN at
+  `http://192.168.0.102:8081` / `:8082`. Public exposure is intentionally deferred until
+  stronger authentication is in place (the app currently has one shared username/password per
+  tenant and no rate limiting on `POST /auth/login`).
+  `deploy/nginx/ksef-tenant.conf.template` is committed source only.
+- **No cron entry for `backup.sh` is installed yet** — now the more pressing gap, since the
+  volumes hold the only actively-used copy of this data.
 - The branch is pushed but not merged to `main`.
 
 ## 12. Known deployment-relevant defect found during this work
