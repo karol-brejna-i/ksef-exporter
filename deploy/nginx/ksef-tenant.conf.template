@@ -1,0 +1,48 @@
+# Template only — nothing in this repository installs, renders, or reloads
+# this file. It is the committed SOURCE for the nginx vhost an operator
+# installs BY HAND on the edge machine (`durga`), one copy per tenant, once
+# the tenant's stack is verified running on `linuc`. See
+# design/DOCKER_DEPLOYMENT_PLAN.md §10 for the design and the install steps
+# (DNS, certbot, /etc/nginx/sites-available/); the developer guide
+# docs/DEPLOYMENT.md documents the operator procedure end to end.
+#
+# Placeholders use a "__NAME__" convention and are filled in BY HAND, once
+# per tenant, before this file is copied onto durga — there is no
+# envsubst/entrypoint step for this file, unlike
+# deploy/docker/nginx/app.conf.template (the in-container SPA/API proxy
+# vhost), which uses `${API_UPSTREAM}` because the official nginx image
+# entrypoint renders that one automatically at container start. Do not
+# confuse the two conventions: `${...}` here would never be substituted.
+#
+#   __TENANT__  the tenant slug, e.g. "parkowa" or "portowa"
+#   __PORT__    the tenant's WEB_PORT from deploy/env/<tenant>.stack.env,
+#               e.g. 8081 for parkowa, 8082 for portowa
+#
+# Example: `sed -e 's/__TENANT__/parkowa/g' -e 's/__PORT__/8081/g'
+# deploy/nginx/ksef-tenant.conf.template > /etc/nginx/sites-available/__TENANT__.ksef.brejna.ovh.conf`
+# then symlink into sites-enabled, `nginx -t`, reload, and run certbot.
+
+server {
+    listen 80;
+    server_name __TENANT__.ksef.brejna.ovh;
+
+    location / {
+        proxy_pass http://192.168.0.102:__PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+
+        # Matches the in-container nginx sidecar's own proxy_read_timeout for
+        # /api/ (deploy/docker/nginx/app.conf.template): a slow sync or a
+        # large invoice export must not be cut off by the edge before the
+        # app itself finishes.
+        proxy_read_timeout 300s;
+    }
+
+    # certbot's `--nginx` plugin rewrites this server block in place to add
+    # TLS (listen 443, ssl_certificate*, and an HTTP->HTTPS redirect on this
+    # block) — that edit happens on durga, by certbot, not here.
+}
