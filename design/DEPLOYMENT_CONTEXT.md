@@ -1,6 +1,6 @@
 # Deployment Context
 
-*Created: 2026-09-13 20:06 CEST*
+*Created: 2026-09-13 20:06 CEST · Updated: 2026-09-13 20:44 CEST*
 
 Self-contained context for any agent asked to analyse, change, or debug how KSeF Exporter is
 deployed. This is the source of truth for Docker and deployment work: read it before touching
@@ -9,9 +9,10 @@ anything under `deploy/`, the `Dockerfile`, the compose stack, or the operationa
 `docs/DEPLOYMENT.md` is the human operator guide. Where any of the three disagrees with the
 code, the code wins — and fix the document.
 
-**Status as of 2026-09-13:** the containerisation is implemented, committed, and verified
-locally. Nothing has been deployed to a server yet, and the edge machine has not been
-touched. See §11 for exactly what is and is not done.
+**Status as of 2026-09-13:** both tenant stacks are implemented, committed, and **running on
+`linuc`**, verified there with real credentials. They are reachable only over the LAN: the
+`durga` edge has not been touched, so there is no public hostname or TLS yet, and the
+databases are still empty. See §11 for exactly what is and is not done.
 
 ## 1. What is being deployed
 
@@ -215,6 +216,21 @@ project, containers, network, and volume per tenant.
 | `deploy/env/<tenant>.secrets.env` | `KSEF_NIP`, `KSEF_TOKEN`, `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET` | **no** |
 | compose `environment:` block | `DATABASE_PATH`, `PORT`, `NODE_ENV`, plus pass-through of `WEB_ORIGIN`/`KSEF_ENVIRONMENT`/`LOG_LEVEL`/`TZ` | yes |
 
+Two hazards in secret *values*, both found the hard way during the first real deploy:
+
+- **Never `source` a secrets file from a shell script.** A real KSeF token is
+  pipe-separated (`<hex>|<hex>|nip-<nip>`), and `source` parses those pipes as a shell
+  pipeline, then tries to execute the token's own segments as commands. That both breaks the
+  script and prints secret material to the terminal. `deploy/scripts/smoke.sh` originally did
+  this and leaked part of a live token into a terminal before being fixed; it now parses
+  `KEY=value` line by line with no shell evaluation. The same applies to `$`, backticks,
+  `&`, `;`, and parentheses.
+- **Compose interpolates `env_file` values, so `$` silently corrupts a secret.** A password
+  of `p$ssw0rd-with-$dollar` reached the container as `p-with-` (7 chars) and failed
+  validation. Write `$$` for a literal `$`, or avoid it. Pipes, `+`, `/`, and `=` are safe —
+  verified by hashing a token inside the container and comparing it to the source value.
+  Neither real tenant's secrets currently contain a `$`, a backslash, or a `#`.
+
 Three precedence facts that matter:
 
 1. **Compose's `environment:` overrides `env_file`.** That is why secrets must never also
@@ -340,17 +356,28 @@ Implemented, committed on branch `docker-deployment`, and verified:
   off the restored file.
 - Repo checks: 328 backend tests, 65 frontend tests, both typechecks, biome across 123 files.
 
+**Deployed to `linuc` on 2026-09-13.** Both tenant stacks are running there from a checkout at
+`~/playground/ksef-exporter` (branch `docker-deployment`, image label
+`org.opencontainers.image.revision` = `0ab4521` on both). The amd64 build is now proven: it
+compiled `better-sqlite3` natively and passed the in-image instantiation probe on
+Ubuntu 6.8 / x86_64 with Docker 24.0.2. `smoke.sh` passes for both tenants against real
+credentials. `/srv/ksef-backups/{parkowa,portowa}` exist, owned by `karol` (uid 1000, which
+matches the container's `node` user, so the bind mount is writable).
+
+Also confirmed on the host: ports 8081/8082 were free, `api` publishes nothing while `web`
+binds only `192.168.0.102:<port>`, and the tenant volumes `ksef-parkowa_data` /
+`ksef-portowa_data` were created cleanly.
+
 Not done:
 
-- **Nothing has been deployed to `linuc`.** No stack has ever run there.
-- **`durga` is untouched.** No DNS records, no vhost installed, no certificate issued.
-  `deploy/nginx/ksef-tenant.conf.template` is committed source only.
-- **No amd64 build has happened.** All local verification was arm64 (Colima on an Apple
-  Silicon Mac). The native `better-sqlite3` binding is compiled during the build, so an
-  amd64 build on `linuc` is expected to work, but it is unproven.
-- **Volumes have never been seeded** with real tenant data.
-- Host prerequisites on `linuc` (`/srv/ksef-backups/<tenant>` directories, cron entries for
-  `backup.sh`) do not exist yet.
+- **`durga` is untouched.** No DNS records, no vhost installed, no certificate issued, so the
+  app is **not reachable from the internet yet** — only from the LAN at
+  `http://192.168.0.102:8081` / `:8082`. `deploy/nginx/ksef-tenant.conf.template` is committed
+  source only.
+- **Volumes have never been seeded** with real tenant data — both databases are empty (schema
+  migrated and categorization rules seeded, zero invoices). §8 has the seeding procedure.
+- No cron entry for `backup.sh` is installed yet.
+- The branch is pushed but not merged to `main`.
 
 ## 12. Known deployment-relevant defect found during this work
 

@@ -69,12 +69,34 @@ if [[ -z "${web_bind}" || -z "${web_port}" ]]; then
 fi
 base_url="http://${web_bind}:${web_port}"
 
-# Source the tenant's real credentials into local shell variables only. Never
-# echoed, never passed as a CLI arg, never exported to a child process's argv.
-AUTH_USERNAME=""
-AUTH_PASSWORD=""
-# shellcheck disable=SC1090
-source "${secrets_env}"
+# Read one KEY=value out of an env file WITHOUT letting the shell evaluate the
+# value. This must never be `source`d: a real KSeF token contains "|" (its
+# format is pipe-separated), which bash parses as a pipeline and then tries to
+# execute the token's own segments as commands -- that both breaks the script
+# and prints secret material into the terminal. The same applies to any value
+# containing $, `, &, ;, (), or a newline continuation.
+read_env_value() {
+  local file="$1" key="$2" line value
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+    [[ "${line}" == "${key}="* ]] || continue
+    value="${line#"${key}"=}"
+    # Strip one layer of matching surrounding quotes, as dotenv/Compose do.
+    if [[ "${value}" == \"*\" && ${#value} -ge 2 ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" == \'*\' && ${#value} -ge 2 ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    printf '%s' "${value}"
+    return 0
+  done <"${file}"
+  return 1
+}
+
+# The tenant's real credentials, held in local shell variables only: never
+# echoed, never passed as a CLI arg, never exported into a child's argv.
+AUTH_USERNAME="$(read_env_value "${secrets_env}" AUTH_USERNAME || true)"
+AUTH_PASSWORD="$(read_env_value "${secrets_env}" AUTH_PASSWORD || true)"
 if [[ -z "${AUTH_USERNAME}" || -z "${AUTH_PASSWORD}" ]]; then
   echo "error: AUTH_USERNAME/AUTH_PASSWORD not set in ${secrets_env}" >&2
   exit 1
