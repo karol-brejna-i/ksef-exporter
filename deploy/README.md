@@ -20,6 +20,6 @@ restore, seeding a deployment, and troubleshooting — see
 
 For the original design this implements, see
 [`design/DOCKER_DEPLOYMENT_PLAN.md`](../design/DOCKER_DEPLOYMENT_PLAN.md). For a
-self-contained agent context document (infrastructure, hostnames, ports, config
-precedence, data lifecycle), see `design/DEPLOYMENT_CONTEXT.md` — written separately; if
-it isn't there yet, use the design plan instead.
+self-contained agent context document (infrastructure, hostnames, ports, image and compose
+mechanics, config precedence, data lifecycle, invariants), see
+[`design/DEPLOYMENT_CONTEXT.md`](../design/DEPLOYMENT_CONTEXT.md).

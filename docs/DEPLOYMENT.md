@@ -115,9 +115,8 @@ tenant's `BACKUP_DIR` (e.g. `/srv/ksef-backups/parkowa` for the real tenants) �
 not the named `data` volume, so snapshots survive `down -v` even if the database volume is
 deliberately discarded.
 
-`backup.sh` is committed as of this wave; `restore.sh` and `smoke.sh` (§9) are being added in
-the same wave and may not be present yet in `deploy/scripts/` — if a command isn't found,
-check there before assuming it's missing entirely.
+All three scripts (`backup.sh`, `restore.sh`, and `smoke.sh` from §9) are committed under
+`deploy/scripts/`.
 
 ## 8. Seeding a deployment from the existing local databases
 
