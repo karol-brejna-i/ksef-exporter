@@ -1,6 +1,6 @@
 # Deployment Context
 
-*Created: 2026-09-13 20:06 CEST · Updated: 2026-09-14 10:37 CEST*
+*Created: 2026-09-13 20:06 CEST · Updated: 2026-09-14 11:11 CEST*
 
 Self-contained context for any agent asked to analyse, change, or debug how KSeF Exporter is
 deployed. This is the source of truth for Docker and deployment work: read it before touching
@@ -9,12 +9,13 @@ anything under `deploy/`, the `Dockerfile`, the compose stack, or the operationa
 `docs/DEPLOYMENT.md` is the human operator guide. Where any of the three disagrees with the
 code, the code wins — and fix the document.
 
-**Status as of 2026-09-13:** both tenant stacks are implemented, committed, **running on
+**Status as of 2026-09-14:** both tenant stacks are implemented, committed, **running on
 `linuc`, and seeded with real tenant data** — the `linuc` instance is now the authoritative
-one and the developer-machine instance should no longer be used for real work. Access is
-LAN-only: the `durga` edge has deliberately not been touched, and exposing the app publicly is
-blocked on stronger authentication being implemented first. See §11 for exactly what is and is
-not done.
+one and the developer-machine instance should no longer be used for real work. **The `durga`
+edge is now configured and the app is public**, at `https://parkowa.zagwozdki.ovh` and
+`https://portowa.zagwozdki.ovh`, behind an extra HTTP basic-auth layer in front of the app's
+own login (added because public exposure was originally deferred pending stronger
+authentication, which still doesn't exist). See §11 for exactly what is and is not done.
 
 ## 1. What is being deployed
 
@@ -394,15 +395,36 @@ data — verified with `integrity_check` and `foreign_key_check` plus unchanged 
 do not be alarmed by the mtime, and do not run it against a database another process is
 writing.
 
+**Done on `durga` (2026-09-14):** two plain-HTTP vhosts were added
+(`/etc/nginx/sites-available/{parkowa,portowa}.zagwozdki.ovh.conf`, symlinked into
+`sites-enabled`), each proxying to its tenant's `linuc` web container and gated by
+`auth_basic` against a dedicated `/etc/nginx/.htpasswd-ksef` (username `ksef`) — this touches
+nothing else on the box; the pre-existing shared `zagwozdki.ovh` cert and its other vhosts
+(`ha`, `gramtok`, the landing page) were left alone. A pre-change backup of
+`sites-available`/`sites-enabled` was taken to `/root/nginx-backups/` on `durga` before any
+edit.
+
+`durga`'s router does not forward inbound port 80 (a known, deliberate prior finding, not
+new — see `.cognitron/prompts/docker-deployment/certbot-cert-issue-analysis.md`), so HTTP-01
+validation was never viable. Certificates for both tenants were issued via `certbot
+--authenticator manual --installer nginx --preferred-challenges dns`, i.e. **manual DNS-01**:
+a `TXT` record under `_acme-challenge.<tenant>.zagwozdki.ovh` was created by hand in the OVH
+panel for each tenant (not via the `certbot-dns-ovh`/OVH-API automation that already exists
+on this box for the `zagwozdki.ovh` cert — deliberately not reused here). Both certs are
+single-domain (not added to the shared `zagwozdki.ovh` cert), expire **2026-12-13**, and
+`nginx -T` confirms Certbot's usual `# managed by Certbot` 443 block plus an HTTP→HTTPS
+redirect on both vhosts.
+
+**Follow-up now outstanding, not yet done:** these two certs **will not auto-renew** —
+`/etc/letsencrypt/renewal/{parkowa,portowa}.zagwozdki.ovh.conf` shows `authenticator =
+manual` with no `--manual-auth-hook`, so `certbot renew`'s cron/systemd timer will skip them.
+Before **2026-12-13**, either repeat the manual DNS-01 dance for both domains, or switch to
+an auth hook / the existing `certbot-dns-ovh` credentials so renewal stops depending on a
+human in the loop.
+
 Not done:
 
-- **`durga` is untouched, deliberately.** No DNS records, no vhost installed, no certificate
-  issued, so the app is **not reachable from the internet** — only from the LAN at
-  `http://192.168.0.102:8081` / `:8082`. Public exposure is intentionally deferred until
-  stronger authentication is in place (the app currently has one shared username/password per
-  tenant and no rate limiting on `POST /auth/login`).
-  `deploy/nginx/ksef-tenant.conf.template` is committed source only.
-- **No cron entry for `backup.sh` is installed yet** — now the more pressing gap, since the
+- **No cron entry for `backup.sh` is installed yet** — the more pressing gap, since the
   volumes hold the only actively-used copy of this data.
 - The branch is pushed but not merged to `main`.
 
