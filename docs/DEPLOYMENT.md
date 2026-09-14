@@ -4,8 +4,8 @@
 
 Operator/developer guide for running KSeF Exporter as Docker containers. For the design
 this implements, see [`design/DOCKER_DEPLOYMENT_PLAN.md`](../design/DOCKER_DEPLOYMENT_PLAN.md).
-For a self-contained agent context document, see `design/DEPLOYMENT_CONTEXT.md` (written
-separately; if it isn't there yet, use the design plan instead).
+For a self-contained agent context document, see `.cognitron/contexts/DEPLOYMENT_CONTEXT.md`
+(written separately; if it isn't there yet, use the design plan instead).
 
 ## 1. Overview
 
@@ -163,7 +163,7 @@ it was run as part of building this deployment:
    the `proxy_pass` target/port) and copy the result into `/etc/nginx/sites-available/` on
    `durga`, then symlink it into `sites-enabled/`.
 3. `nginx -t` to validate the config, then reload nginx.
-4. Request a certificate, e.g. `sudo certbot --nginx -d <tenant>.ksef.brejna.ovh
+4. Request a certificate, e.g. `sudo certbot --nginx -d <tenant>.zagwozdki.ovh
    --non-interactive --agree-tos --redirect`.
 
 Because the app holds real invoice data behind a single-owner login, also consider adding an

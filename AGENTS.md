@@ -7,7 +7,7 @@ delegating work that doesn't belong in the main context. Agents live under
 by the primary agent (you), never scheduled or triggered by a hook.
 
 No agent below owns `deploy/` or Docker deployment work; for that context, read
-`design/DEPLOYMENT_CONTEXT.md` instead.
+`.cognitron/contexts/DEPLOYMENT_CONTEXT.md` instead.
 
 ## Index
 

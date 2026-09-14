@@ -19,12 +19,12 @@
 #               e.g. 8081 for parkowa, 8082 for portowa
 #
 # Example: `sed -e 's/__TENANT__/parkowa/g' -e 's/__PORT__/8081/g'
-# deploy/nginx/ksef-tenant.conf.template > /etc/nginx/sites-available/__TENANT__.ksef.brejna.ovh.conf`
+# deploy/nginx/ksef-tenant.conf.template > /etc/nginx/sites-available/__TENANT__.zagwozdki.ovh.conf`
 # then symlink into sites-enabled, `nginx -t`, reload, and run certbot.
 
 server {
     listen 80;
-    server_name __TENANT__.ksef.brejna.ovh;
+    server_name __TENANT__.zagwozdki.ovh;
 
     location / {
         proxy_pass http://192.168.0.102:__PORT__;

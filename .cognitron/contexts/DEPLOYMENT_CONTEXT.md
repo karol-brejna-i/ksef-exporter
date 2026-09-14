@@ -1,6 +1,6 @@
 # Deployment Context
 
-*Created: 2026-09-13 20:06 CEST · Updated: 2026-09-13 20:44 CEST*
+*Created: 2026-09-13 20:06 CEST · Updated: 2026-09-14 10:37 CEST*
 
 Self-contained context for any agent asked to analyse, change, or debug how KSeF Exporter is
 deployed. This is the source of truth for Docker and deployment work: read it before touching
@@ -37,13 +37,15 @@ Two physical machines on a home LAN (this predates the KSeF app; another project
 already runs this way and its context doc lives at
 `.cognitron/prompts/docker-deployment/deployment-context.md`):
 
-| Alias | LAN IP | Role |
-| ----- | ------ | ---- |
-| `linuc` | 192.168.0.102 | Application server — runs Docker Compose stacks |
+| Alias   | LAN IP        | Role                                                            |
+| ------- | ------------- | --------------------------------------------------------------- |
+| `linuc` | 192.168.0.102 | Application server — runs Docker Compose stacks                 |
 | `durga` | 192.168.0.103 | Edge / reverse proxy — nginx + Let's Encrypt, has the public IP |
 
 `durga` holds public IP `194.49.105.105` with ports 80/443 forwarded from the router, and
-terminates TLS for `*.brejna.ovh` names via certbot. All traffic between `durga` and `linuc`
+terminates TLS via certbot for its many hosted vhosts (this app's tenants live under
+`zagwozdki.ovh`, alongside unrelated `brejna.ovh` and other `zagwozdki.ovh` sites). All
+traffic between `durga` and `linuc`
 is plain HTTP inside the LAN. SSH aliases `ssh linuc` / `ssh durga` are configured.
 
 Intended routing for this app (**not yet configured on `durga`** — see §11):
@@ -54,8 +56,8 @@ Browser (HTTPS)
       ▼
   durga :443  nginx + TLS
       │
-      ├── parkowa.ksef.brejna.ovh ──► linuc :8081
-      └── portowa.ksef.brejna.ovh ──► linuc :8082
+      ├── parkowa.zagwozdki.ovh ──► linuc :8081
+      └── portowa.zagwozdki.ovh ──► linuc :8082
 ```
 
 ## 3. Architecture on the app host
@@ -81,11 +83,11 @@ project ksef-parkowa                       project ksef-portowa
 
 Port map (`local` avoids the real tenants; all three avoid CaterScan's 3001–3002 / 5173–5176):
 
-| Tenant | Compose project | Web port | Bind address | Volume | KSeF env |
-| ------ | --------------- | -------- | ------------ | ------ | -------- |
-| `parkowa` | `ksef-parkowa` | 8081 | 192.168.0.102 | `ksef-parkowa_data` | `PRD` |
-| `portowa` | `ksef-portowa` | 8082 | 192.168.0.102 | `ksef-portowa_data` | `PRD` |
-| `local` | `ksef-local` | 8091 | 127.0.0.1 | `ksef-local_data` | `TEST` |
+| Tenant    | Compose project | Web port | Bind address  | Volume              | KSeF env |
+| --------- | --------------- | -------- | ------------- | ------------------- | -------- |
+| `parkowa` | `ksef-parkowa`  | 8081     | 192.168.0.102 | `ksef-parkowa_data` | `PRD`    |
+| `portowa` | `ksef-portowa`  | 8082     | 192.168.0.102 | `ksef-portowa_data` | `PRD`    |
+| `local`   | `ksef-local`    | 8091     | 127.0.0.1     | `ksef-local_data`   | `TEST`   |
 
 Two deliberate choices here, both load-bearing:
 
@@ -118,7 +120,7 @@ deploy/
 .dockerignore
 docs/DEPLOYMENT.md                # operator guide
 design/DOCKER_DEPLOYMENT_PLAN.md  # original design + rationale
-design/DEPLOYMENT_CONTEXT.md      # this file
+.cognitron/contexts/DEPLOYMENT_CONTEXT.md  # this file
 ```
 
 `.gitignore` ignores `*.env`, which would have swallowed the committed stack files, so it
@@ -212,11 +214,11 @@ readable error naming the `.example` to copy) and then execs
 Compose reads `COMPOSE_PROJECT_NAME` from that env file, which is what namespaces the
 project, containers, network, and volume per tenant.
 
-| Where | Contents | Committed? |
-| ----- | -------- | ---------- |
-| `deploy/env/<tenant>.stack.env` | `COMPOSE_PROJECT_NAME`, `TENANT`, `KSEF_ENVIRONMENT`, `WEB_ORIGIN`, `WEB_BIND`, `WEB_PORT`, `LOG_LEVEL`, `TZ`, `BACKUP_DIR` | yes |
-| `deploy/env/<tenant>.secrets.env` | `KSEF_NIP`, `KSEF_TOKEN`, `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET` | **no** |
-| compose `environment:` block | `DATABASE_PATH`, `PORT`, `NODE_ENV`, plus pass-through of `WEB_ORIGIN`/`KSEF_ENVIRONMENT`/`LOG_LEVEL`/`TZ` | yes |
+| Where                             | Contents                                                                                                                    | Committed? |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `deploy/env/<tenant>.stack.env`   | `COMPOSE_PROJECT_NAME`, `TENANT`, `KSEF_ENVIRONMENT`, `WEB_ORIGIN`, `WEB_BIND`, `WEB_PORT`, `LOG_LEVEL`, `TZ`, `BACKUP_DIR` | yes        |
+| `deploy/env/<tenant>.secrets.env` | `KSEF_NIP`, `KSEF_TOKEN`, `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET`                                                    | **no**     |
+| compose `environment:` block      | `DATABASE_PATH`, `PORT`, `NODE_ENV`, plus pass-through of `WEB_ORIGIN`/`KSEF_ENVIRONMENT`/`LOG_LEVEL`/`TZ`                  | yes        |
 
 Two hazards in secret *values*, both found the hard way during the first real deploy:
 
@@ -302,15 +304,15 @@ repo's `data/` directory into a container.
 
 All commands run on the app host, from the checkout:
 
-| Task | Command |
-| ---- | ------- |
-| First start / update | `deploy/ksef-stack.sh <tenant> up -d --build` |
-| Status / logs | `deploy/ksef-stack.sh <tenant> ps` · `… logs -f api` |
-| Stop (keep data) | `deploy/ksef-stack.sh <tenant> down` |
-| Post-deploy check | `deploy/scripts/smoke.sh <tenant>` |
-| One-off task | `deploy/ksef-stack.sh <tenant> exec -T api node dist/tools/<name>.js` |
-| Manual backup | `deploy/scripts/backup.sh <tenant>` |
-| Restore | stop stack → `deploy/scripts/restore.sh <tenant> <snapshot> --yes` → `up -d` |
+| Task                 | Command                                                                      |
+| -------------------- | ---------------------------------------------------------------------------- |
+| First start / update | `deploy/ksef-stack.sh <tenant> up -d --build`                                |
+| Status / logs        | `deploy/ksef-stack.sh <tenant> ps` · `… logs -f api`                         |
+| Stop (keep data)     | `deploy/ksef-stack.sh <tenant> down`                                         |
+| Post-deploy check    | `deploy/scripts/smoke.sh <tenant>`                                           |
+| One-off task         | `deploy/ksef-stack.sh <tenant> exec -T api node dist/tools/<name>.js`        |
+| Manual backup        | `deploy/scripts/backup.sh <tenant>`                                          |
+| Restore              | stop stack → `deploy/scripts/restore.sh <tenant> <snapshot> --yes` → `up -d` |
 
 Every compiled tool under `dist/tools/` is available through `exec` — backfills, reconcile,
 export, backup. `tsx` is not present in the runtime image, which is why they run as compiled
@@ -373,10 +375,10 @@ binds only `192.168.0.102:<port>`, and the tenant volumes `ksef-parkowa_data` /
 **Seeded with real data on 2026-09-13**, following the §8 procedure, and `linuc` is now the
 authoritative instance. Verified after restore, per tenant, against the source databases:
 
-| Tenant | invoices | invoice_items | sync_runs | sync_state |
-| ------ | -------- | ------------- | --------- | ---------- |
-| `parkowa` | 493 | 4 534 | 54 | 2 rows, continuation points intact |
-| `portowa` | 655 | 6 557 | 36 | 2 rows, continuation points intact |
+| Tenant    | invoices | invoice_items | sync_runs | sync_state                         |
+| --------- | -------- | ------------- | --------- | ---------------------------------- |
+| `parkowa` | 493      | 4 534         | 54        | 2 rows, continuation points intact |
+| `portowa` | 655      | 6 557         | 36        | 2 rows, continuation points intact |
 
 Row counts are identical to the source across every table, the `sync_state` rows hash
 byte-identically to the source (so the next sync resumes instead of refetching into a

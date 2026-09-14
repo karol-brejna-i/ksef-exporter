@@ -1,11 +1,11 @@
 # Docker Deployment Plan
 
-*Created: 2026-09-13 19:07 CEST*
+*Created: 2026-09-13 19:07 CEST · Updated: 2026-09-14 10:37 CEST*
 
 Implementation design for containerising KSeF Exporter and running it on the home
 infrastructure, reachable over the internet with TLS. This document is the design to agree
 on; the developer guide (`docs/DEPLOYMENT.md`) and the agent context document
-(`design/DEPLOYMENT_CONTEXT.md`) are written during implementation so they describe what
+(`.cognitron/contexts/DEPLOYMENT_CONTEXT.md`) are written during implementation so they describe what
 actually exists rather than what was planned.
 
 ## 1. Goal and scope
@@ -29,15 +29,15 @@ Out of scope, deliberately:
 
 ## 2. Decisions
 
-| # | Decision | Rationale |
-| - | -------- | --------- |
-| D1 | Compose stacks on `linuc` (192.168.0.102); TLS terminated by nginx on `durga`; plain HTTP over the LAN | Reuses the working CaterScan topology, certbot, and NAT forwarding already on `durga` |
-| D2 | Two containers per tenant: `api` (Fastify, unpublished) + `web` (nginx serving `web/dist`, proxying `/api`) | `web/src/api/client.ts` hardcodes the same-origin `/api` prefix, so the SPA needs a same-origin proxy. nginx does that natively, keeps the API off the network, and needs no backend change |
-| D3 | One isolated stack per tenant, own subdomain, own volume, own secrets | Tenants already have separate KSeF tokens, credentials, JWT secrets, and databases; sharing any of them would be a regression |
-| D4 | Images built on the target host from a git checkout | `better-sqlite3` is a single-ABI native addon; a native amd64 build on the host avoids cross-arch and ABI trouble entirely |
-| D5 | One multi-stage `Dockerfile` with two targets (`api`, `web`) | Both images need the same `pnpm install`; a single builder stage shares that layer and its cache |
-| D6 | Non-secret config committed per tenant; secrets in git-ignored files, injected as env vars | Real environment variables win over `.env*` files in `src/config/load-env.ts`, so no env file is ever baked into an image |
-| D7 | Production runs compiled JavaScript (`node dist/api/main.js`), not `tsx` | `tsx` is a devDependency; `tsc` already emits `dist/tools/*.js`, so maintenance tasks work without it |
+| #   | Decision                                                                                                    | Rationale                                                                                                                                                                                   |
+| --- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Compose stacks on `linuc` (192.168.0.102); TLS terminated by nginx on `durga`; plain HTTP over the LAN      | Reuses the working CaterScan topology, certbot, and NAT forwarding already on `durga`                                                                                                       |
+| D2  | Two containers per tenant: `api` (Fastify, unpublished) + `web` (nginx serving `web/dist`, proxying `/api`) | `web/src/api/client.ts` hardcodes the same-origin `/api` prefix, so the SPA needs a same-origin proxy. nginx does that natively, keeps the API off the network, and needs no backend change |
+| D3  | One isolated stack per tenant, own subdomain, own volume, own secrets                                       | Tenants already have separate KSeF tokens, credentials, JWT secrets, and databases; sharing any of them would be a regression                                                               |
+| D4  | Images built on the target host from a git checkout                                                         | `better-sqlite3` is a single-ABI native addon; a native amd64 build on the host avoids cross-arch and ABI trouble entirely                                                                  |
+| D5  | One multi-stage `Dockerfile` with two targets (`api`, `web`)                                                | Both images need the same `pnpm install`; a single builder stage shares that layer and its cache                                                                                            |
+| D6  | Non-secret config committed per tenant; secrets in git-ignored files, injected as env vars                  | Real environment variables win over `.env*` files in `src/config/load-env.ts`, so no env file is ever baked into an image                                                                   |
+| D7  | Production runs compiled JavaScript (`node dist/api/main.js`), not `tsx`                                    | `tsx` is a devDependency; `tsc` already emits `dist/tools/*.js`, so maintenance tasks work without it                                                                                       |
 
 ## 3. Target architecture
 
@@ -48,7 +48,7 @@ Out of scope, deliberately:
                           │  (plain HTTP over LAN)
         ┌─────────────────┴──────────────────┐
         │                                    │
- parkowa.ksef.brejna.ovh            portowa.ksef.brejna.ovh
+ parkowa.zagwozdki.ovh              portowa.zagwozdki.ovh
         ▼                                    ▼
  linuc 192.168.0.102:8081            linuc 192.168.0.102:8082
  ┌──────────────────────────┐        ┌──────────────────────────┐
@@ -69,10 +69,10 @@ Out of scope, deliberately:
 
 Port allocation on `linuc`, chosen to avoid the CaterScan range (3001–3002, 5173–5176):
 
-| Port | Bound to | Service |
-| ---- | -------- | ------- |
-| 8081 | 192.168.0.102 | `ksef-parkowa` web |
-| 8082 | 192.168.0.102 | `ksef-portowa` web |
+| Port | Bound to             | Service                            |
+| ---- | -------------------- | ---------------------------------- |
+| 8081 | 192.168.0.102        | `ksef-parkowa` web                 |
+| 8082 | 192.168.0.102        | `ksef-portowa` web                 |
 | —    | compose network only | both `api` containers (`api:3000`) |
 
 The API port is never published. Publishing it would also bypass `ufw`, which does not
@@ -106,7 +106,7 @@ deploy/
     smoke.sh                     # post-deploy health/login/invoices check
 .dockerignore                    # new, at repo root
 docs/DEPLOYMENT.md               # operator/developer guide (written in wave 3)
-design/DEPLOYMENT_CONTEXT.md     # agent source of truth (written in wave 3)
+.cognitron/contexts/DEPLOYMENT_CONTEXT.md  # agent source of truth (written in wave 3)
 ```
 
 `.gitignore` currently ignores `*.env`, which would swallow the committed
@@ -197,7 +197,7 @@ wanted: operational values live in the committed stack file, secrets live only i
 git-ignored one.
 
 `deploy/env/<tenant>.stack.env` (committed) holds `COMPOSE_PROJECT_NAME=ksef-<tenant>`,
-`TENANT`, `KSEF_ENVIRONMENT=PRD`, `WEB_ORIGIN=https://<tenant>.ksef.brejna.ovh`,
+`TENANT`, `KSEF_ENVIRONMENT=PRD`, `WEB_ORIGIN=https://<tenant>.zagwozdki.ovh`,
 `WEB_BIND=192.168.0.102`, `WEB_PORT`, `LOG_LEVEL=info`, `TZ=Europe/Warsaw`,
 `BACKUP_DIR=/srv/ksef-backups/<tenant>`.
 
@@ -268,15 +268,15 @@ volume.
 
 ## 9. Operations
 
-| Task | Command (run on `linuc`, from the checkout) |
-| ---- | ------------------------------------------ |
-| First start / update | `git pull && deploy/ksef-stack.sh parkowa up -d --build` |
-| Status / logs | `deploy/ksef-stack.sh parkowa ps` · `… logs -f api` |
-| Stop (keep data) | `deploy/ksef-stack.sh parkowa down` |
-| Post-deploy check | `deploy/scripts/smoke.sh parkowa` |
-| One-off task | `deploy/ksef-stack.sh parkowa exec -T api node dist/tools/export-invoices.js` |
-| Manual backup | `deploy/scripts/backup.sh parkowa` |
-| Rollback | snapshot, `git checkout <sha>`, `up -d --build`; restore the snapshot if a migration ran |
+| Task                 | Command (run on `linuc`, from the checkout)                                              |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| First start / update | `git pull && deploy/ksef-stack.sh parkowa up -d --build`                                 |
+| Status / logs        | `deploy/ksef-stack.sh parkowa ps` · `… logs -f api`                                      |
+| Stop (keep data)     | `deploy/ksef-stack.sh parkowa down`                                                      |
+| Post-deploy check    | `deploy/scripts/smoke.sh parkowa`                                                        |
+| One-off task         | `deploy/ksef-stack.sh parkowa exec -T api node dist/tools/export-invoices.js`            |
+| Manual backup        | `deploy/scripts/backup.sh parkowa`                                                       |
+| Rollback             | snapshot, `git checkout <sha>`, `up -d --build`; restore the snapshot if a migration ran |
 
 Every compiled tool under `dist/tools/` is available the same way — backfills, reconcile,
 export. `smoke.sh` checks `/health`, logs in with the tenant's credentials, and fetches one
@@ -293,13 +293,13 @@ installing it, requesting certificates, and adding DNS records are operator step
 until the stacks are verified on `linuc`.
 
 `deploy/nginx/ksef-tenant.conf.template` is committed as the source for both vhosts:
-`server_name <tenant>.ksef.brejna.ovh`, `proxy_pass http://192.168.0.102:<port>`, standard
+`server_name <tenant>.zagwozdki.ovh`, `proxy_pass http://192.168.0.102:<port>`, standard
 `X-Forwarded-{For,Proto,Host}` headers, and `proxy_read_timeout 300s` on `/api/` so the
 edge does not cut off a sync or an export before the app does. No WebSocket upgrade is
 needed. Installation is the existing routine: DNS `A` records for both names →
 `194.49.105.105`, copy the rendered file into `/etc/nginx/sites-available/`, symlink,
 `nginx -t`, reload, then
-`sudo certbot --nginx -d <tenant>.ksef.brejna.ovh --non-interactive --agree-tos --redirect`.
+`sudo certbot --nginx -d <tenant>.zagwozdki.ovh --non-interactive --agree-tos --redirect`.
 
 Because the app is single-owner with credential login and holds real invoice data, the guide
 also documents optional edge hardening (a `deny`/`allow` list or basic-auth in front of the
@@ -312,10 +312,10 @@ suite, typecheck, lint, and the container smoke run at each wave boundary, by me
 
 **Wave 1 — three parallel agents, no file overlap:**
 
-| Agent | Owns |
-| ----- | ---- |
-| A · images | `deploy/docker/Dockerfile`, `deploy/docker/nginx/app.conf.template`, `.dockerignore` |
-| B · stack | `deploy/docker-compose.yml`, `deploy/ksef-stack.sh`, `deploy/env/*`, `.gitignore` |
+| Agent       | Owns                                                                                                                  |
+| ----------- | --------------------------------------------------------------------------------------------------------------------- |
+| A · images  | `deploy/docker/Dockerfile`, `deploy/docker/nginx/app.conf.template`, `.dockerignore`                                  |
+| B · stack   | `deploy/docker-compose.yml`, `deploy/ksef-stack.sh`, `deploy/env/*`, `.gitignore`                                     |
 | C · backend | `src/api/server.ts` (+`server.test.ts`), `src/db/backup.ts`, `src/tools/backup-db.ts` (+tests), `package.json` script |
 
 Wave 1 gate: `pnpm test`, `pnpm run typecheck`, `pnpm run lint`, then
@@ -325,15 +325,15 @@ build here proves the Dockerfile; the amd64 build on `linuc` is proven on first 
 
 **Wave 2 — two parallel agents:**
 
-| Agent | Owns |
-| ----- | ---- |
-| D · ops scripts | `deploy/scripts/{backup,restore,smoke}.sh`, `deploy/nginx/ksef-tenant.conf.template` |
-| E · docs | `docs/DEPLOYMENT.md`, `deploy/README.md`, pointer lines in `README.md`, `.github/copilot-instructions.md`, `AGENTS.md` |
+| Agent           | Owns                                                                                                                   |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| D · ops scripts | `deploy/scripts/{backup,restore,smoke}.sh`, `deploy/nginx/ksef-tenant.conf.template`                                   |
+| E · docs        | `docs/DEPLOYMENT.md`, `deploy/README.md`, pointer lines in `README.md`, `.github/copilot-instructions.md`, `AGENTS.md` |
 
 Wave 2 gate: run `backup.sh` and `restore.sh` end to end against the local scratch stack,
 and re-run the full suite plus lint after the doc edits.
 
-**Wave 3 — me, not delegated:** `design/DEPLOYMENT_CONTEXT.md`, the self-contained agent
+**Wave 3 — me, not delegated:** `.cognitron/contexts/DEPLOYMENT_CONTEXT.md`, the self-contained agent
 source of truth (infrastructure, hostnames, ports, volume and project names, image
 internals, config precedence, data lifecycle, the gotchas in §12, and the operations table),
 plus a status entry in `design/IMPLEMENTATION_PLAN.md`. Any figure or path that came from a
